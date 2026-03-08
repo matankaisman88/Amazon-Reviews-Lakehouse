@@ -175,29 +175,64 @@ def _format_rating(value: float) -> str:
 
 
 def _run_refresh_flow(target_date: str) -> None:
-    """Execute the Amazon pipeline refresh for target_date."""
-    from src.utils.pipeline_orchestrator import run_refresh
+    """Execute the Amazon pipeline refresh for target_date in a subprocess."""
+    import subprocess
+    import sys
 
     log_lines: List[str] = []
     status_placeholder = st.sidebar.empty()
+    failed = False
+
+    script_path = Path(__file__).resolve().parent.parent.parent / "scripts" / "run_refresh_standalone.py"
+    if not script_path.exists():
+        st.sidebar.error(f"Refresh script not found: {script_path}")
+        return
+
+    st.sidebar.caption(
+        "Spark startup can take 1–2 minutes in Docker. The page will update when the pipeline finishes."
+    )
 
     try:
         with st.spinner(f"Running Amazon pipeline for {target_date}..."):
-            for line in run_refresh(target_date):
-                log_lines.append(line)
-                status_placeholder.caption(line or "...")
+            proc = subprocess.Popen(
+                [sys.executable, str(script_path), target_date],
+                stdout=subprocess.PIPE,
+                stderr=subprocess.STDOUT,
+                text=True,
+                bufsize=1,
+                cwd=str(script_path.parent.parent),
+                env={**os.environ, "PYTHONPATH": str(script_path.parent.parent)},
+            )
+            for line in iter(proc.stdout.readline, ""):
+                line = line.rstrip()
+                if line:
+                    log_lines.append(line)
+                    status_placeholder.caption(line)
+            proc.wait()
+            if proc.returncode != 0:
+                raise RuntimeError(f"Pipeline exited with code {proc.returncode}")
 
         status_placeholder.empty()
         st.sidebar.success(f"Amazon pipeline finished for {target_date}.")
         st.cache_data.clear()
         st.cache_resource.clear()
+        st.rerun()
 
     except RuntimeError as exc:
         status_placeholder.empty()
         st.sidebar.error(f"Pipeline failed: {exc}")
+        if log_lines:
+            log_lines.append(f"Error: {exc}")
+        failed = True
+    except Exception as exc:
+        status_placeholder.empty()
+        st.sidebar.error(f"Pipeline failed: {exc}")
+        if log_lines:
+            log_lines.append(f"Error: {exc}")
+        failed = True
 
     if log_lines:
-        with st.sidebar.expander("View pipeline log", expanded=False):
+        with st.sidebar.expander("View pipeline log", expanded=failed):
             st.code("\n".join(log_lines), language=None)
 
 

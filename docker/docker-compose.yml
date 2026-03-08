@@ -85,6 +85,7 @@ services:
       - ../.env
     environment:
       - PYTHONPATH=/opt/spark-app
+      - DATA_ROOT=/data
       # Set your OpenAI API key here or in a .env file at the project root.
       # The AI Query feature will be disabled if this variable is not provided.
       - OPENAI_API_KEY=${OPENAI_API_KEY:-}

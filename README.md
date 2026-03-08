@@ -171,7 +171,7 @@ For interactive exploration, daily refresh, and manual backfill via the UI.
 docker compose -f docker/docker-compose.yml up -d dashboard
 ```
 
-Access at `http://localhost:8501`. The dashboard runs Bronze → Silver → Gold **in-process** (no separate Spark cluster required for refresh).
+Access at `http://localhost:8501`. The dashboard runs Bronze → Silver → Gold via a **subprocess** (isolated from the UI; no separate Spark cluster required for refresh).
 
 ### Refresh Data (sidebar)
 
@@ -179,6 +179,8 @@ Access at `http://localhost:8501`. The dashboard runs Bronze → Silver → Gold
 2. **Advanced: Manual Backfill** — Date picker to run the pipeline for any past date.
 
 Both run **Fetch (if needed) → Bronze → Silver → Gold**. Raw data is auto-fetched from McAuley Lab when none is staged. Cache is cleared on success. Pipeline logs in "View pipeline log" expander.
+
+**Note:** Spark startup can take 1–2 minutes in Docker. The page will update when the pipeline finishes. Progress is streamed to the sidebar.
 
 ### Dashboard UI
 
@@ -266,6 +268,7 @@ For declining products (rating drop > 0.5 vs previous week), use **Generate AI R
 │
 ├── scripts/
 │   ├── fetch_amazon_data.py # Download raw JSONL.gz from McAuley Lab (UCSD)
+│   ├── run_refresh_standalone.py  # Pipeline for dashboard refresh (subprocess; prints progress to stdout)
 │   ├── run_pipeline.sh      # Full Medallion (auto-fetches if needed): Bronze → Silver → Gold
 │   ├── run_amazon_bronze.sh # Bronze stage only
 │   ├── run_amazon_silver.sh # Silver stage only

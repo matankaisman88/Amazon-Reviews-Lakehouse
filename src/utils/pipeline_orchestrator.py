@@ -26,14 +26,13 @@ def _project_root() -> Path:
 
 
 def _amazon_raw_root() -> Path:
-    """Resolve the expected Amazon raw root from config."""
+    """Resolve the expected Amazon raw root from config. Always use config path so Docker volume /data is used."""
     from src.utils.config_loader import get_paths
 
     paths = get_paths()
     raw_root = Path(paths.get("raw", "/data/raw")) / "amazon"
-    if raw_root.exists():
-        return raw_root
-    return _project_root() / "data" / "raw" / "amazon"
+    raw_root.mkdir(parents=True, exist_ok=True)
+    return raw_root
 
 
 def _count_raw_files(raw_root: Path) -> int:
@@ -85,7 +84,7 @@ def run_refresh(target_date: Optional[str] = None) -> Iterator[str]:
     # ── Shared SparkSession ───────────────────────────────────────────────
     yield ""
     yield "─" * 50
-    yield "Initialising SparkSession …"
+    yield "Initialising SparkSession (may take 1–2 min in Docker) …"
     try:
         from src.utils.spark_session import get_spark_session
 
