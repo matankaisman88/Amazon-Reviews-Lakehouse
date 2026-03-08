@@ -13,6 +13,7 @@ import json
 import os
 import sys
 from pathlib import Path
+from typing import List, Optional
 from urllib.request import urlretrieve
 
 # McAuley Lab public dataset (reviews_<Cat>.json.gz, meta_<Cat>.json.gz)
@@ -71,7 +72,7 @@ def _raw_root() -> Path:
 
 
 def _download_and_convert_to_jsonl(
-    url: str, dest: Path, overwrite: bool = False, max_rows: int | None = None
+    url: str, dest: Path, overwrite: bool = False, max_rows: Optional[int] = None
 ) -> bool:
     """
     Download gzipped JSON/JSONL and save as .jsonl.gz.
@@ -186,10 +187,10 @@ def _map_to_2023_meta(obj: dict) -> dict:
 
 
 def fetch_categories(
-    categories: list[str],
+    categories: List[str],
     raw_root: Path,
     overwrite: bool = False,
-    max_rows: int | None = None,
+    max_rows: Optional[int] = None,
 ) -> int:
     """Download review and metadata files for each category. Returns count of files downloaded."""
     reviews_dir = raw_root / "reviews"
@@ -222,10 +223,10 @@ def fetch_categories(
 
 
 def run_fetch(
-    categories: list[str] | None = None,
-    raw_root: Path | None = None,
+    categories: Optional[List[str]] = None,
+    raw_root: Optional[Path] = None,
     overwrite: bool = False,
-    max_rows: int | None = None,
+    max_rows: Optional[int] = None,
 ) -> int:
     """
     Programmatic fetch: download Amazon Reviews 2023 data.

@@ -80,7 +80,7 @@ For running the pipeline via scripts (e.g. cron, CI, or one-off backfills).
 ### Prerequisites
 
 - Docker & Docker Compose
-- Python 3.10+ (for local dev)
+- Python 3.9+ (for local dev; Docker uses Python 3.x from the Spark base image)
 
 ### Step 1: Fetch Raw Data (or use sample)
 
