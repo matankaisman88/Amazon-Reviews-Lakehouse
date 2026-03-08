@@ -23,6 +23,7 @@ CREATE TABLE product_metrics (
    ,total_reviews          BIGINT  NOT NULL
    ,average_rating         DOUBLE  NOT NULL
    ,rolling_30d_avg_rating DOUBLE  NOT NULL
+   ,avg_price              DOUBLE
 ) USING DELTA
 PARTITIONED BY (category, review_date);"""
 
@@ -32,6 +33,11 @@ CREATE TABLE category_trends (
    ,review_date         DATE    NOT NULL
    ,daily_review_count  BIGINT  NOT NULL
    ,daily_avg_rating    DOUBLE  NOT NULL
+   ,count_1_star        BIGINT
+   ,count_2_star        BIGINT
+   ,count_3_star        BIGINT
+   ,count_4_star        BIGINT
+   ,count_5_star        BIGINT
 ) USING DELTA
 PARTITIONED BY (category, review_date);"""
 
@@ -270,3 +276,87 @@ class AIQueryHelper:
                 "dataframe": pd.DataFrame(),
                 "error": str(exc),
             }
+
+    def summarize_declining_product(
+        self,
+        parent_asin: str,
+        category: str,
+        max_reviews: int = 50,
+        max_chars_per_review: int = 500,
+    ) -> Dict[str, Any]:
+        """
+        Fetch recent review texts from Silver for a product and use LLM to summarize
+        potential root causes for rating decline.
+
+        Returns dict with keys: summary, error (or None).
+        """
+        from src.utils.config_loader import get_paths
+
+        paths = get_paths()
+        silver_root = paths.get("silver")
+        if not silver_root:
+            return {"summary": "", "error": "Silver path not configured."}
+
+        silver_path = Path(silver_root) / "amazon_reviews"
+        if not silver_path.exists():
+            return {"summary": "", "error": "Silver table not found."}
+
+        try:
+            from pyspark.sql import functions as F
+            from src.utils.spark_session import get_spark_session
+
+            spark = get_spark_session(app_name="AmazonReviews-AIRootCause")
+            silver_df = spark.read.format("delta").load(str(silver_path))
+            reviews_df = (
+                silver_df.filter(
+                    (F.col("parent_asin") == parent_asin) & (F.col("category") == category)
+                )
+                .select("review_text", "rating")
+                .orderBy(F.col("review_timestamp").desc())
+                .limit(max_reviews)
+            )
+            rows = reviews_df.collect()
+        except Exception as exc:  # noqa: BLE001
+            return {"summary": "", "error": str(exc)}
+
+        if not rows:
+            return {"summary": "", "error": "No reviews found for this product."}
+
+        # Build context for LLM (truncate long reviews)
+        review_texts = []
+        for i, row in enumerate(rows):
+            text = (row.review_text or "").strip()
+            if len(text) > max_chars_per_review:
+                text = text[:max_chars_per_review] + "..."
+            if text:
+                review_texts.append(f"[Rating: {row.rating}] {text}")
+
+        if not review_texts:
+            return {"summary": "", "error": "No review text content available."}
+
+        reviews_block = "\n\n---\n\n".join(review_texts[:30])  # Limit to 30 for token budget
+
+        prompt = f"""A product (ASIN: {parent_asin}) in category "{category}" has shown a declining average rating.
+
+Below are recent customer reviews (rating and text). Analyze them and provide a concise root-cause summary:
+
+1. What common complaints or themes appear?
+2. What might explain the rating decline?
+3. Any actionable insights for the seller?
+
+Keep the response to 3-5 bullet points, under 300 words.
+
+REVIEWS:
+{reviews_block}
+"""
+
+        try:
+            response = self._client.chat.completions.create(
+                model=self._model,
+                messages=[{"role": "user", "content": prompt}],
+                temperature=0.3,
+            )
+            summary = response.choices[0].message.content or ""
+            return {"summary": summary, "error": None}
+        except Exception as exc:  # noqa: BLE001
+            return {"summary": "", "error": str(exc)}

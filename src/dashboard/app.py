@@ -1,3 +1,8 @@
+"""
+Amazon Reviews BI Dashboard - High-value analytics with cross-category comparisons,
+anomaly detection, value-for-money analysis, and AI-powered root-cause insights.
+"""
+
 import html
 import os
 from datetime import date, timedelta
@@ -6,6 +11,7 @@ from typing import Dict, List, Optional, Tuple
 
 import pandas as pd
 import plotly.express as px
+import plotly.graph_objects as go
 import streamlit as st
 from deltalake import DeltaTable
 
@@ -85,6 +91,35 @@ def load_dashboard_metadata() -> Tuple[List[str], Optional[date], Optional[date]
     ]
 
     return categories, summary.min_review_date, summary.max_review_date
+
+
+@st.cache_data(show_spinner=False)
+def load_global_category_leaderboard(start_date: date, end_date: date) -> pd.DataFrame:
+    """Load aggregated category leaderboard (total reviews, weighted avg rating) via Spark."""
+    from pyspark.sql import functions as F
+    from src.utils.spark_session import get_spark_session
+
+    category_trends_path = _gold_table_path("category_trends")
+    if not category_trends_path.exists():
+        return pd.DataFrame()
+
+    spark = get_spark_session("AmazonDashboardLeaderboard")
+    trends = spark.read.format("delta").load(str(category_trends_path))
+    trends = trends.filter(
+        (F.col("review_date") >= F.lit(start_date)) & (F.col("review_date") <= F.lit(end_date))
+    )
+
+    sum_count = F.sum("daily_review_count")
+    sum_weighted = F.sum(F.col("daily_review_count") * F.col("daily_avg_rating"))
+    leaderboard = (
+        trends.groupBy("category")
+        .agg(
+            sum_count.alias("total_reviews"),
+            F.when(sum_count > 0, sum_weighted / sum_count).otherwise(None).alias("weighted_avg_rating"),
+        )
+        .orderBy(F.desc("total_reviews"))
+    )
+    return leaderboard.toPandas()
 
 
 @st.cache_data(show_spinner=False)
@@ -219,6 +254,246 @@ def _render_sidebar_filters(categories: List[str], min_date: date, max_date: dat
     return category, start_date, end_date
 
 
+def _render_global_overview_tab(start_date: date, end_date: date) -> None:
+    """Render Global Overview: category leaderboard comparing all categories."""
+    leaderboard = load_global_category_leaderboard(start_date, end_date)
+    if leaderboard.empty:
+        st.warning("No category data available for the selected date range.")
+        return
+
+    leaderboard["rank"] = range(1, len(leaderboard) + 1)
+    leaderboard["weighted_avg_rating"] = leaderboard["weighted_avg_rating"].round(2)
+
+    # Summary metrics
+    total_reviews = int(leaderboard["total_reviews"].sum())
+    top_cat = leaderboard.iloc[0]
+    avg_rating = leaderboard["weighted_avg_rating"].mean()
+
+    m1, m2, m3, m4 = st.columns(4)
+    m1.metric("Categories", len(leaderboard))
+    m2.metric("Total Reviews", f"{total_reviews:,}")
+    m3.metric("Avg Rating (all)", f"{avg_rating:.2f}")
+    m4.metric("Top Category", top_cat["category"], delta=f"★ {top_cat['weighted_avg_rating']:.2f}")
+
+    st.divider()
+
+    # Horizontal bar chart: Reviews by Category
+    chart_df = leaderboard.sort_values("total_reviews", ascending=True)
+    fig_reviews = px.bar(
+        chart_df,
+        x="total_reviews",
+        y="category",
+        orientation="h",
+        color="weighted_avg_rating",
+        color_continuous_scale="Viridis",
+        title="Reviews by Category",
+        labels={"total_reviews": "Total Reviews", "weighted_avg_rating": "Avg Rating"},
+    )
+    fig_reviews.update_layout(
+        height=max(300, len(leaderboard) * 28),
+        margin=dict(l=20, r=20, t=40, b=20),
+        yaxis=dict(autorange="reversed"),
+        coloraxis_colorbar=dict(title="Rating"),
+    )
+    st.plotly_chart(fig_reviews, use_container_width=True)
+
+    # Rating vs Reviews scatter
+    fig_scatter = px.scatter(
+        leaderboard,
+        x="total_reviews",
+        y="weighted_avg_rating",
+        size="total_reviews",
+        color="category",
+        hover_data=["rank", "category"],
+        title="Rating vs. Review Volume",
+    )
+    fig_scatter.update_layout(
+        xaxis_title="Total Reviews",
+        yaxis_title="Weighted Avg Rating",
+        height=350,
+        showlegend=len(leaderboard) <= 15,
+    )
+    st.plotly_chart(fig_scatter, use_container_width=True)
+
+    # Ranked table with styling
+    st.subheader("Full Leaderboard")
+    display_df = leaderboard[["rank", "category", "total_reviews", "weighted_avg_rating"]].rename(
+        columns={
+            "weighted_avg_rating": "★ Rating",
+            "total_reviews": "Reviews",
+        }
+    )
+    st.dataframe(display_df, use_container_width=True, hide_index=True, column_config={
+        "rank": st.column_config.NumberColumn("Rank", format="%d", width="small"),
+        "category": st.column_config.TextColumn("Category"),
+        "Reviews": st.column_config.NumberColumn("Reviews", format="%d"),
+        "★ Rating": st.column_config.NumberColumn("Rating", format="%.2f"),
+    })
+
+
+def _render_declining_products(product_metrics: pd.DataFrame, category: str) -> None:
+    """Identify products whose rolling_30d_avg_rating dropped > 0.5 vs previous week."""
+    st.subheader("Product Red Flags: Declining Products")
+    st.caption(
+        "Products whose 30-day rolling average rating dropped by more than 0.5 points "
+        "compared to the previous week."
+    )
+
+    if product_metrics.empty or len(product_metrics) < 2:
+        st.info("Insufficient product metrics to detect declining products.")
+        return
+
+    pm = product_metrics.sort_values("review_date")
+    latest = pm.groupby("parent_asin").tail(1)[["parent_asin", "review_date", "rolling_30d_avg_rating"]]
+    latest = latest.rename(columns={"review_date": "latest_date", "rolling_30d_avg_rating": "current_rating"})
+    latest["prev_week_date"] = (pd.to_datetime(latest["latest_date"]) - pd.Timedelta(days=7)).dt.date
+
+    prev_rows = pm[["parent_asin", "review_date", "rolling_30d_avg_rating"]].rename(
+        columns={"review_date": "prev_week_date", "rolling_30d_avg_rating": "prev_rating"}
+    )
+    merged = latest.merge(prev_rows, on=["parent_asin", "prev_week_date"], how="inner")
+    merged["rating_decline"] = merged["prev_rating"] - merged["current_rating"]
+    declining = merged[merged["rating_decline"] > 0.5].sort_values("rating_decline", ascending=False)
+
+    if declining.empty:
+        st.success("No declining products detected in this category.")
+        return
+
+    display_df = declining[["parent_asin", "current_rating", "prev_rating", "rating_decline"]].rename(
+        columns={
+            "prev_rating": "Prev Week Rating",
+            "current_rating": "Current Rating",
+            "rating_decline": "Decline (pts)",
+        }
+    ).drop_duplicates("parent_asin")
+    st.dataframe(display_df, use_container_width=True, hide_index=True)
+
+    selected_asin = st.selectbox(
+        "Select a declining product for AI Root-Cause Analysis",
+        options=declining["parent_asin"].unique().tolist(),
+        key="declining_product_select",
+    )
+    _render_ai_root_cause_button(selected_asin, category)
+
+
+def _render_ai_root_cause_button(parent_asin: str, category: str) -> None:
+    """Render 'Generate AI Root-Cause Analysis' button using ai_query_helper."""
+    if not os.getenv("OPENAI_API_KEY"):
+        st.caption("Set OPENAI_API_KEY to enable AI Root-Cause Analysis.")
+        return
+
+    if st.button("Generate AI Root-Cause Analysis", key="ai_root_cause_btn"):
+        with st.spinner("Analyzing recent reviews..."):
+            try:
+                helper = _get_ai_helper()
+                result = helper.summarize_declining_product(parent_asin=parent_asin, category=category)
+            except ValueError as exc:
+                result = {"summary": "", "error": str(exc)}
+
+        if result.get("error"):
+            st.error(result["error"])
+        elif result.get("summary"):
+            with st.expander("AI Root-Cause Summary", expanded=True):
+                st.markdown(result["summary"])
+
+
+def _render_value_for_money(product_metrics: pd.DataFrame) -> None:
+    """Scatter plot: Price vs Rating for top 50 products. Highlight 'Top Value' outliers."""
+    st.subheader("Value for Money Analysis")
+    st.caption("Price vs. Rating for top 50 products. Top Value = low price, high rating.")
+
+    if "avg_price" not in product_metrics.columns:
+        st.warning("Price data not available. Re-run the Gold pipeline to include avg_price.")
+        return
+
+    latest = (
+        product_metrics.sort_values("review_date")
+        .groupby("parent_asin")
+        .tail(1)
+        .dropna(subset=["avg_price", "rolling_30d_avg_rating"])
+    )
+    if latest.empty:
+        st.info("No products with price and rating data.")
+        return
+
+    # Top 50 by total_reviews
+    top50 = latest.nlargest(50, "total_reviews")
+    if top50.empty:
+        return
+
+    # Top Value: low price, high rating (normalize and score)
+    price_pct = top50["avg_price"].rank(pct=True)
+    rating_pct = top50["rolling_30d_avg_rating"].rank(pct=True)
+    top50 = top50.copy()
+    top50["value_score"] = rating_pct - price_pct  # High rating + low price = high score
+    top_value = top50.nlargest(5, "value_score")
+
+    fig = px.scatter(
+        top50,
+        x="avg_price",
+        y="rolling_30d_avg_rating",
+        size="total_reviews",
+        hover_data=["parent_asin", "total_reviews"],
+        title="Price vs. Rating (Top 50 Products by Review Count)",
+    )
+    if not top_value.empty:
+        fig.add_trace(
+            go.Scatter(
+                x=top_value["avg_price"].tolist(),
+                y=top_value["rolling_30d_avg_rating"].tolist(),
+                mode="markers",
+                marker=dict(symbol="star", size=16, color="gold", line=dict(width=2, color="darkorange")),
+                name="Top Value",
+                text=top_value["parent_asin"].tolist(),
+            )
+        )
+    fig.update_layout(xaxis_title="Avg Price ($)", yaxis_title="30-Day Avg Rating")
+    st.plotly_chart(fig, use_container_width=True)
+
+
+def _render_sentiment_breakdown(category_trends: pd.DataFrame) -> None:
+    """Stacked bar chart: percentage of 1-5 star ratings over time."""
+    st.subheader("Sentiment Breakdown")
+    st.caption("Distribution of star ratings over time (stacked percentage).")
+
+    star_cols = ["count_1_star", "count_2_star", "count_3_star", "count_4_star", "count_5_star"]
+    if not all(c in category_trends.columns for c in star_cols):
+        st.warning(
+            "Rating distribution not available. Re-run the Gold pipeline to include star counts."
+        )
+        return
+
+    df = category_trends.copy()
+    df["total"] = df[star_cols].sum(axis=1)
+    df = df[df["total"] > 0]
+    if df.empty:
+        st.info("No rating distribution data.")
+        return
+
+    for c in star_cols:
+        df[c + "_pct"] = 100 * df[c] / df["total"]
+
+    fig = go.Figure()
+    colors = ["#dc2626", "#ea580c", "#ca8a04", "#65a30d", "#16a34a"]
+    for i, (col, label) in enumerate(zip(star_cols, ["1 Star", "2 Star", "3 Star", "4 Star", "5 Star"])):
+        fig.add_trace(
+            go.Bar(
+                x=df["review_date"],
+                y=df[col + "_pct"],
+                name=label,
+                marker_color=colors[i],
+            )
+        )
+    fig.update_layout(
+        barmode="stack",
+        title="Star Rating Distribution Over Time",
+        xaxis_title="Date",
+        yaxis_title="Percentage (%)",
+        legend=dict(orientation="h", yanchor="bottom", y=1.02),
+    )
+    st.plotly_chart(fig, use_container_width=True)
+
+
 def _render_overview_metrics(
     category_trends: pd.DataFrame,
     product_metrics: pd.DataFrame,
@@ -245,7 +520,11 @@ def _render_overview_metrics(
     c1, c2, c3, c4 = st.columns(4)
     c1.metric("Latest Daily Avg Rating", _format_rating(float(latest_category["daily_avg_rating"])))
     c2.metric("Reviews In Range", f"{int(category_trends['daily_review_count'].sum()):,}")
-    c3.metric("Top Product", str(top_product["parent_asin"]), delta=_format_rating(float(top_product["rolling_30d_avg_rating"])))
+    c3.metric(
+        "Top Product",
+        str(top_product["parent_asin"]),
+        delta=_format_rating(float(top_product["rolling_30d_avg_rating"])),
+    )
     c4.metric("Verified Rating Uplift", f"{trust_uplift:+.2f}")
 
 
@@ -280,7 +559,11 @@ def _render_product_performance(product_metrics: pd.DataFrame) -> None:
         .sort_values("rolling_30d_avg_rating", ascending=False)
     )
 
-    chart_df = latest_products.head(10).copy()
+    display_cols = ["parent_asin", "review_date", "total_reviews", "average_rating", "rolling_30d_avg_rating"]
+    if "avg_price" in product_metrics.columns:
+        display_cols.append("avg_price")
+    chart_df = latest_products.head(10)[display_cols].copy()
+
     bar_fig = px.bar(
         chart_df,
         x="parent_asin",
@@ -290,9 +573,7 @@ def _render_product_performance(product_metrics: pd.DataFrame) -> None:
     )
     st.plotly_chart(bar_fig, use_container_width=True)
 
-    display_df = latest_products[
-        ["parent_asin", "review_date", "total_reviews", "average_rating", "rolling_30d_avg_rating"]
-    ].rename(
+    display_df = latest_products[display_cols].rename(
         columns={
             "review_date": "latest_review_date",
             "average_rating": "cumulative_avg_rating",
@@ -336,15 +617,17 @@ def _render_trust_analysis(verified_impact: pd.DataFrame) -> None:
     col2.plotly_chart(trend_fig, use_container_width=True)
 
 
-def _render_dashboard_tab(category: str, start_date: date, end_date: date) -> None:
-    """Render the Amazon analytics dashboard."""
+def _render_category_analytics_tab(
+    category: str, start_date: date, end_date: date
+) -> None:
+    """Render the category-specific analytics dashboard."""
     if start_date > end_date:
         st.error("Start date must be before or equal to end date.")
         return
 
     st.title("Amazon Reviews & Product Insights")
     st.caption(
-        "Analyze category trends, product performance, and verified-purchase trust signals "
+        "Analyze category trends, product performance, value-for-money, and anomaly detection "
         "from the Amazon Reviews lakehouse."
     )
 
@@ -366,10 +649,22 @@ def _render_dashboard_tab(category: str, start_date: date, end_date: date) -> No
 
     _render_overview_metrics(category_trends, product_metrics, verified_impact)
     st.divider()
+
+    _render_sentiment_breakdown(category_trends)
+    st.divider()
+
     _render_rating_trends(category_trends)
     st.divider()
+
+    _render_declining_products(product_metrics, category)
+    st.divider()
+
+    _render_value_for_money(product_metrics)
+    st.divider()
+
     _render_product_performance(product_metrics)
     st.divider()
+
     _render_trust_analysis(verified_impact)
 
 
@@ -497,9 +792,11 @@ def main() -> None:
 
     category, start_date, end_date = _render_sidebar_filters(categories, min_date, max_date)
 
-    tab_dashboard, tab_ai = st.tabs(["Dashboard", "Ask AI"])
-    with tab_dashboard:
-        _render_dashboard_tab(category, start_date, end_date)
+    tab_global, tab_category, tab_ai = st.tabs(["Global Overview", "Category Analytics", "Ask AI"])
+    with tab_global:
+        _render_global_overview_tab(start_date, end_date)
+    with tab_category:
+        _render_category_analytics_tab(category, start_date, end_date)
     with tab_ai:
         _render_ai_chat_tab()
 

@@ -20,7 +20,7 @@ from src.utils.amazon_schemas import (
     AMAZON_PRODUCT_METRICS_GOLD_SCHEMA,
     AMAZON_VERIFIED_PURCHASE_IMPACT_GOLD_SCHEMA,
 )
-from src.utils.config_loader import get_max_partition_bytes, get_paths
+from src.utils.config_loader import get_max_partition_bytes, get_paths, get_gold_optimize_threshold
 from src.utils.spark_session import get_spark_session
 
 AMAZON_ROOT = "amazon_reviews"
@@ -94,6 +94,7 @@ def _build_product_metrics_df(silver_df: DataFrame, output_start, output_end) ->
     daily_product = silver_df.groupBy("parent_asin", "category", "review_date").agg(
         F.count("*").alias("daily_review_count"),
         F.sum("rating").alias("daily_rating_sum"),
+        F.avg("price").alias("daily_avg_price"),
     )
 
     order_col = F.unix_date("review_date")
@@ -108,6 +109,7 @@ def _build_product_metrics_df(silver_df: DataFrame, output_start, output_end) ->
         .rangeBetween(-(ROLLING_DAYS - 1), 0)
     )
 
+    # avg_price: use last non-null daily_avg_price in rolling window (product price is stable)
     product_metrics = (
         daily_product.withColumn("total_reviews", F.sum("daily_review_count").over(cumulative_window))
         .withColumn("cumulative_rating_sum", F.sum("daily_rating_sum").over(cumulative_window))
@@ -121,6 +123,10 @@ def _build_product_metrics_df(silver_df: DataFrame, output_start, output_end) ->
             "rolling_30d_avg_rating",
             F.col("rolling_30d_rating_sum") / F.col("rolling_30d_review_count"),
         )
+        .withColumn(
+            "avg_price",
+            F.last("daily_avg_price", ignorenulls=True).over(rolling_window),
+        )
         .select(*[field.name for field in AMAZON_PRODUCT_METRICS_GOLD_SCHEMA.fields])
     )
 
@@ -128,12 +134,18 @@ def _build_product_metrics_df(silver_df: DataFrame, output_start, output_end) ->
 
 
 def _build_category_trends_df(silver_df: DataFrame, output_start, output_end) -> DataFrame:
-    """Build daily category-level trend metrics."""
+    """Build daily category-level trend metrics with rating distribution."""
+    rounded_rating = F.round(F.col("rating")).cast("long")
     category_trends = (
         silver_df.groupBy("category", "review_date")
         .agg(
             F.count("*").alias("daily_review_count"),
             F.avg("rating").alias("daily_avg_rating"),
+            F.sum(F.when(rounded_rating == 1, 1).otherwise(0)).alias("count_1_star"),
+            F.sum(F.when(rounded_rating == 2, 1).otherwise(0)).alias("count_2_star"),
+            F.sum(F.when(rounded_rating == 3, 1).otherwise(0)).alias("count_3_star"),
+            F.sum(F.when(rounded_rating == 4, 1).otherwise(0)).alias("count_4_star"),
+            F.sum(F.when(rounded_rating == 5, 1).otherwise(0)).alias("count_5_star"),
         )
         .select(*[field.name for field in AMAZON_CATEGORY_TRENDS_GOLD_SCHEMA.fields])
     )
@@ -186,25 +198,29 @@ def _write_gold_table(
 def _optimize_table(
     spark: SparkSession,
     target_root: Path,
-    df: DataFrame,
+    output_start,
+    output_end,
+    categories: List[str],
     zorder_cols: Optional[List[str]] = None,
 ) -> None:
-    """OPTIMIZE only the touched partitions and Z-ORDER supported data columns."""
+    """OPTIMIZE only the touched partitions and Z-ORDER. Uses date range + categories (no collect)."""
     if not (target_root / "_delta_log").exists():
         return
-
-    dates = [str(row.review_date) for row in df.select("review_date").distinct().collect() if row.review_date]
-    categories = [row.category for row in df.select("category").distinct().collect() if row.category]
-    if not dates or not categories:
+    if not categories:
         return
 
+    from datetime import timedelta
+
+    dates = []
+    d = output_start
+    while d <= output_end:
+        dates.append(str(d))
+        d += timedelta(days=1)
     date_list = "', '".join(dates)
     category_list = "', '".join(categories)
     predicate = f"review_date IN ('{date_list}') AND category IN ('{category_list}')"
 
     optimize_builder = DeltaTable.forPath(spark, str(target_root)).optimize().where(predicate)
-    # Delta cannot Z-ORDER partition columns, so partition pruning handles
-    # category/review_date while Z-ORDER is reserved for useful data columns.
     if zorder_cols:
         optimize_builder.executeZOrderBy(zorder_cols)
     else:
@@ -224,6 +240,8 @@ def run(
     spark = spark or get_spark_session("AmazonGoldAnalytics")
     # Smaller scan partitions help avoid oversized tasks on constrained executors.
     spark.conf.set("spark.sql.files.maxPartitionBytes", get_max_partition_bytes())
+    # Enable schema evolution for merge (adds new columns like avg_price, count_*_star).
+    spark.conf.set("spark.databricks.delta.schema.autoMerge.enabled", "true")
 
     silver_df = spark.read.format("delta").load(str(silver_root))
     touched_df = _apply_filters(silver_df, category, ingestion_date)
@@ -238,12 +256,25 @@ def run(
     if category:
         source_df = source_df.filter(F.col("category") == category)
 
+    # Cache source_df: used for 3 Gold tables; avoid re-scanning Silver 3x.
+    source_df = source_df.cache()
+    if category:
+        categories = [category]
+    else:
+        categories = [r.category for r in source_df.select("category").distinct().collect() if r.category]
+
     product_metrics_df = _build_product_metrics_df(source_df, output_start, output_end)
     category_trends_df = _build_category_trends_df(source_df, output_start, output_end)
     verified_impact_df = _build_verified_purchase_impact_df(source_df, output_start, output_end)
 
     if product_metrics_df.isEmpty():
+        source_df.unpersist()
         return
+
+    # Cache product_metrics for count + write; count drives conditional OPTIMIZE.
+    product_metrics_df = product_metrics_df.cache()
+    row_count = product_metrics_df.count()
+    source_df.unpersist()
 
     product_root = gold_root / "product_metrics"
     category_root = gold_root / "category_trends"
@@ -261,6 +292,8 @@ def run(
             ]
         ),
     )
+    product_metrics_df.unpersist()
+
     _write_gold_table(
         spark,
         category_trends_df,
@@ -280,10 +313,15 @@ def run(
         ),
     )
 
-    if not skip_optimize:
-        _optimize_table(spark, product_root, product_metrics_df, zorder_cols=["parent_asin"])
-        _optimize_table(spark, category_root, category_trends_df)
-        _optimize_table(spark, verified_root, verified_impact_df, zorder_cols=["verified_purchase"])
+    optimize_threshold = get_gold_optimize_threshold()
+    if not skip_optimize and row_count >= optimize_threshold:
+        _optimize_table(
+            spark, product_root, output_start, output_end, categories, zorder_cols=["parent_asin"]
+        )
+        _optimize_table(spark, category_root, output_start, output_end, categories)
+        _optimize_table(
+            spark, verified_root, output_start, output_end, categories, zorder_cols=["verified_purchase"]
+        )
 
 
 if __name__ == "__main__":

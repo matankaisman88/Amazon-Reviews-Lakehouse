@@ -28,9 +28,10 @@ def get_spark_session(app_name: str = "AmazonReviewsLakehouse") -> SparkSession:
             "org.apache.spark.sql.delta.catalog.DeltaCatalog",
         )
         .config("spark.executor.memory", cfg.get("executor_memory", "1g"))
-        .config("spark.memory.fraction", str(cfg.get("memory_fraction", 0.6)))
-        .config("spark.memory.storageFraction", str(cfg.get("memory_storage_fraction", 0.5)))
-        .config("spark.sql.shuffle.partitions", str(cfg.get("shuffle_partitions", 200)))
+        .config("spark.driver.memory", cfg.get("driver_memory", "512m"))
+        .config("spark.memory.fraction", str(cfg.get("memory_fraction", 0.5)))
+        .config("spark.memory.storageFraction", str(cfg.get("memory_storage_fraction", 0.3)))
+        .config("spark.sql.shuffle.partitions", str(cfg.get("shuffle_partitions", 8)))
         .config("spark.sql.adaptive.enabled", str(cfg.get("adaptive_enabled", True)).lower())
         .config(
             "spark.serializer", cfg.get("serializer", "org.apache.spark.serializer.KryoSerializer")

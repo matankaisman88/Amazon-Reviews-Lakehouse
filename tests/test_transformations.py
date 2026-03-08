@@ -160,17 +160,23 @@ def test_amazon_gold_analytics_logic(spark_session):
     assert product_rows[("P1", "2020-05-01")].total_reviews == 2
     assert product_rows[("P1", "2020-05-01")].average_rating == 4.5
     assert product_rows[("P1", "2020-05-01")].rolling_30d_avg_rating == 4.5
+    assert product_rows[("P1", "2020-05-01")].avg_price == 19.99
     assert product_rows[("P1", "2020-05-02")].total_reviews == 3
     assert product_rows[("P1", "2020-05-02")].average_rating == 4.0
     assert product_rows[("P1", "2020-05-02")].rolling_30d_avg_rating == 4.0
     assert product_rows[("P2", "2020-05-02")].total_reviews == 1
     assert product_rows[("P2", "2020-05-02")].average_rating == 2.0
+    assert product_rows[("P2", "2020-05-02")].avg_price == 9.99
 
     category_rows = {str(row.review_date): row for row in category_trends.orderBy("review_date").collect()}
     assert category_rows["2020-05-01"].daily_review_count == 2
     assert category_rows["2020-05-01"].daily_avg_rating == 4.5
+    assert category_rows["2020-05-01"].count_5_star == 1
+    assert category_rows["2020-05-01"].count_4_star == 1
     assert category_rows["2020-05-02"].daily_review_count == 2
     assert category_rows["2020-05-02"].daily_avg_rating == 2.5
+    assert category_rows["2020-05-02"].count_3_star == 1
+    assert category_rows["2020-05-02"].count_2_star == 1
 
     verified_rows = {
         (str(row.review_date), row.verified_purchase): row

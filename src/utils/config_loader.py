@@ -68,6 +68,13 @@ def get_gold_rolling_days() -> int:
     return int(gold.get("rolling_days", 30))
 
 
+def get_gold_optimize_threshold() -> int:
+    """Min rows to run OPTIMIZE/Z-ORDER; skip for small batches to avoid rewrite overhead."""
+    cfg = _load_config()
+    gold = cfg.get("gold", {})
+    return int(gold.get("optimize_threshold_rows", 100000))
+
+
 def get_fetch_config() -> Dict[str, Any]:
     """Fetch settings: default_categories, max_rows_per_category (None = no limit)."""
     cfg = _load_config()

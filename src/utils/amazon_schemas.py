@@ -77,6 +77,7 @@ AMAZON_PRODUCT_METRICS_GOLD_SCHEMA = StructType(
         StructField("total_reviews", LongType(), True),
         StructField("average_rating", DoubleType(), True),
         StructField("rolling_30d_avg_rating", DoubleType(), True),
+        StructField("avg_price", DoubleType(), True),
     ]
 )
 
@@ -87,6 +88,11 @@ AMAZON_CATEGORY_TRENDS_GOLD_SCHEMA = StructType(
         StructField("review_date", DateType(), True),
         StructField("daily_review_count", LongType(), True),
         StructField("daily_avg_rating", DoubleType(), True),
+        StructField("count_1_star", LongType(), True),
+        StructField("count_2_star", LongType(), True),
+        StructField("count_3_star", LongType(), True),
+        StructField("count_4_star", LongType(), True),
+        StructField("count_5_star", LongType(), True),
     ]
 )
 

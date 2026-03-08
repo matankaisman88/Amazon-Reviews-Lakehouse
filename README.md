@@ -58,8 +58,8 @@ Fetch (McAuley Lab UCSD) → Raw JSONL.gz
 
 | Table | Purpose |
 |------|---------|
-| **product_metrics** | Per-product daily aggregates: `total_reviews`, `average_rating`, `rolling_30d_avg_rating` |
-| **category_trends** | Category-level daily: `daily_review_count`, `daily_avg_rating` |
+| **product_metrics** | Per-product daily aggregates: `total_reviews`, `average_rating`, `rolling_30d_avg_rating`, `avg_price` |
+| **category_trends** | Category-level daily: `daily_review_count`, `daily_avg_rating`, star distribution (`count_1_star` … `count_5_star`) |
 | **verified_purchase_impact** | Trust analysis: avg rating by `verified_purchase` (true/false) |
 
 ## Run Modes
@@ -169,19 +169,27 @@ Both run **Fetch (if needed) → Bronze → Silver → Gold**. Raw data is auto-
 
 ### Dashboard UI
 
-- **Rating Trends**: Category-level daily review counts and average ratings over time
-- **Product Performance**: Top products by review volume and rating
-- **Trust Analysis**: Verified vs non-verified purchase impact on ratings
-- **Filters**: category, date range, table sort. **Download as CSV**
+- **Global Overview**: Category leaderboard with metrics, bar chart, and rating vs. volume scatter
+- **Category Analytics**: Drill-down with filters (category, date range)
+  - **Sentiment Breakdown**: Stacked bar chart of 1–5 star rating distribution over time
+  - **Rating Trends**: Daily review counts and average ratings
+  - **Product Red Flags**: Declining products (rating drop > 0.5 vs previous week) with AI Root-Cause Analysis
+  - **Value for Money**: Price vs. rating scatter for top 50 products; highlights “Top Value” outliers
+  - **Product Performance**: Top products by rolling 30-day rating
+  - **Trust Analysis**: Verified vs non-verified purchase impact
 
 ### AI Query (Natural Language to SQL)
 
 Ask questions in plain English; an LLM translates to Spark SQL and explains results.
 
 - **Requirements**: `OPENAI_API_KEY` in `.env`. Optional: `OPENAI_MODEL` (default `gpt-4o-mini`).
-- **Tables**: `product_metrics`, `category_trends`, `verified_purchase_impact`
+- **Tables**: `product_metrics` (incl. `avg_price`), `category_trends` (incl. star counts), `verified_purchase_impact`
 - **Safety**: Only `SELECT`; `LIMIT 100`; read-only analytical queries
 - **CTE Support**: `WITH ... SELECT` queries allowed for complex analytics
+
+### AI Root-Cause Analysis
+
+For declining products (rating drop > 0.5 vs previous week), use **Generate AI Root-Cause Analysis** to summarize recent review text from Silver and identify common themes. Requires `OPENAI_API_KEY`.
 
 ---
 
@@ -194,12 +202,12 @@ Ask questions in plain English; an LLM translates to Spark SQL and explains resu
 ### Spark Tuning (AQE & Memory)
 
 - `spark.sql.adaptive.enabled=true` — AQE coalesces shuffle partitions at runtime.
-- `spark.sql.shuffle.partitions=200` — High initial count; AQE reduces to optimal size.
-- `spark.max_partition_bytes` — Max bytes per partition for file scans (default `128m`). Increase to `256m` for 100k+ row batches to reduce task count and scheduling overhead; keep within executor memory limits.
-- Default executor memory is `1g` (see `config/config.yaml`); for larger runs:
-  - Increase `spark.executor.memory` in config (e.g. `2g`–`4g`), **and**
-  - Ensure `SPARK_WORKER_MEMORY` / container memory limits are set higher.
-- Run Silver/Gold incrementally by passing an `ingestion_date` to operate on the latest batch instead of full history.
+- `spark.sql.shuffle.partitions=8` — Tuned for small batches (3MB–100K rows); increase to 200 for large datasets.
+- `spark.memory.fraction=0.5` — Leaves headroom for JVM on constrained env (1–2GB RAM).
+- `spark.max_partition_bytes` — Max bytes per partition for file scans (default `128m`). Increase to `256m` for 100k+ row batches.
+- `gold.optimize_threshold_rows=100000` — OPTIMIZE/Z-ORDER runs only above this; skip for small batches to avoid rewrite overhead.
+- Default executor memory is `1g`; increase `spark.executor.memory` (e.g. `2g`) when RAM permits.
+- Run Silver/Gold incrementally by passing an `ingestion_date` or `--category=` to scope work.
 
 ## Project Structure
 
@@ -226,7 +234,7 @@ Ask questions in plain English; an LLM translates to Spark SQL and explains resu
 │
 ├── src/
 │   ├── dashboard/
-│   │   └── app.py           # Streamlit UI: Rating Trends, Product Performance, Trust Analysis, AI Query
+│   │   └── app.py           # Streamlit BI: Global Overview, Category Analytics, AI Query
 │   │
 │   ├── jobs/
 │   │   ├── amazon_bronze_ingestion.py   # Raw JSONL.gz → Delta (reviews, metadata)
