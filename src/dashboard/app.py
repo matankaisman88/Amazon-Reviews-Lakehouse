@@ -174,8 +174,8 @@ def _format_rating(value: float) -> str:
     return f"{value:.2f}"
 
 
-def _run_refresh_flow(target_date: str) -> None:
-    """Execute the Amazon pipeline refresh for target_date in a subprocess."""
+def _run_refresh_flow(category: str) -> None:
+    """Execute the Amazon pipeline for category in a subprocess."""
     import subprocess
     import sys
 
@@ -193,9 +193,9 @@ def _run_refresh_flow(target_date: str) -> None:
     )
 
     try:
-        with st.spinner(f"Running Amazon pipeline for {target_date}..."):
+        with st.spinner(f"Running pipeline for {category}..."):
             proc = subprocess.Popen(
-                [sys.executable, str(script_path), target_date],
+                [sys.executable, str(script_path), f"--category={category}"],
                 stdout=subprocess.PIPE,
                 stderr=subprocess.STDOUT,
                 text=True,
@@ -213,7 +213,7 @@ def _run_refresh_flow(target_date: str) -> None:
                 raise RuntimeError(f"Pipeline exited with code {proc.returncode}")
 
         status_placeholder.empty()
-        st.sidebar.success(f"Amazon pipeline finished for {target_date}.")
+        st.sidebar.success(f"Pipeline finished for {category}.")
         st.cache_data.clear()
         st.cache_resource.clear()
         st.rerun()
@@ -236,23 +236,35 @@ def _run_refresh_flow(target_date: str) -> None:
             st.code("\n".join(log_lines), language=None)
 
 
+def _pipeline_categories() -> List[str]:
+    """Categories available for pipeline (from fetch script)."""
+    import sys
+    root = Path(__file__).resolve().parent.parent.parent
+    sys.path.insert(0, str(root / "scripts"))
+    try:
+        from fetch_amazon_data import ALL_CATEGORIES
+        return ALL_CATEGORIES
+    except Exception:
+        return ["Gift_Cards", "All_Beauty", "Books", "Electronics", "Digital_Music"]
+
+
 def _render_refresh_button() -> None:
     """Render the Amazon Bronze -> Silver -> Gold pipeline controls."""
     st.sidebar.header("DATA MANAGEMENT")
     st.sidebar.caption(
-        "Run the Amazon Medallion pipeline against staged raw Amazon review files. "
-        "This executes Bronze → Silver → Gold. Source data is static (up to 2023)."
+        "Run the Medallion pipeline for a category. Fetches raw data if needed. "
+        "Source data is static (up to 2023)."
     )
 
-    backfill_date = st.sidebar.date_input(
-        "Ingestion date",
-        value=date.today() - timedelta(days=1),
-        min_value=date(2020, 1, 1),
-        max_value=date.today(),
-        key="backfill_date",
+    pipeline_cats = _pipeline_categories()
+    pipeline_category = st.sidebar.selectbox(
+        "Category to process",
+        options=pipeline_cats,
+        index=pipeline_cats.index("Gift_Cards") if "Gift_Cards" in pipeline_cats else 0,
+        key="pipeline_category",
     )
-    if st.sidebar.button("Run Pipeline", type="primary", key="run_backfill", use_container_width=True):
-        _run_refresh_flow(backfill_date.strftime("%Y-%m-%d"))
+    if st.sidebar.button("Run Pipeline", type="primary", key="run_pipeline", use_container_width=True):
+        _run_refresh_flow(pipeline_category)
 
     st.sidebar.divider()
 

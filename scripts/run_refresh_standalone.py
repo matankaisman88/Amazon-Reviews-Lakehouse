@@ -1,6 +1,9 @@
 """
 Standalone script to run the pipeline and print progress to stdout.
 Used by the dashboard so the pipeline runs in a subprocess and doesn't block Streamlit.
+
+Usage: python scripts/run_refresh_standalone.py [--category=Category]
+  --category=Gift_Cards  (default: Gift_Cards)
 """
 import os
 import sys
@@ -11,8 +14,12 @@ sys.path.insert(0, project_root)
 os.chdir(project_root)
 
 if __name__ == "__main__":
-    target_date = sys.argv[1] if len(sys.argv) > 1 else None
+    category = None
+    for arg in sys.argv[1:]:
+        if arg.startswith("--category="):
+            category = arg.split("=", 1)[1]
+            break
     from src.utils.pipeline_orchestrator import run_refresh
 
-    for line in run_refresh(target_date):
+    for line in run_refresh(category=category):
         print(line, flush=True)

@@ -68,8 +68,8 @@ Two ways to process data:
 
 | Mode | Use case | How |
 |------|----------|-----|
-| **1. Manual Pipeline** | Scripts, CI/CD, custom dates | Run `run_pipeline.sh` (auto-fetches raw data if needed) |
-| **2. Dashboard** | Interactive UI, backfill | Start dashboard → Use **Run Pipeline** (auto-fetches if needed) |
+| **1. Manual Pipeline** | Scripts, CI/CD, by category | Run `run_pipeline.sh` (auto-fetches raw data if needed) |
+| **2. Dashboard** | Interactive UI, by category | Start dashboard → Select category → **Run Pipeline** (auto-fetches if needed) |
 
 ---
 
@@ -123,10 +123,9 @@ docker compose -f docker/docker-compose.yml up -d spark-master spark-worker hist
 ./scripts/run_amazon_silver.sh [YYYY-MM-DD]   # Silver only (optional ingestion_date)
 ./scripts/run_amazon_gold.sh   [YYYY-MM-DD] [--skip-optimize]  # Gold only; --skip-optimize skips OPTIMIZE
 
-./scripts/run_pipeline.sh                     # Bronze -> Silver -> Gold (full Medallion)
-./scripts/run_pipeline.sh 2024-01-01          # Specific ingestion_date
-./scripts/run_pipeline.sh 2025-01-01 --skip-optimize  # Backfill without OPTIMIZE
-./scripts/run_pipeline.sh 2025-01-01 --category=Gift_Cards  # Scope to one category; auto-fetches that category if missing
+./scripts/run_pipeline.sh                     # Bronze -> Silver -> Gold (all staged categories)
+./scripts/run_pipeline.sh --category=Gift_Cards  # Scope to one category; auto-fetches if missing
+./scripts/run_pipeline.sh --category=All_Beauty --skip-optimize  # One category, skip Gold OPTIMIZE
 ```
 
 #### PowerShell
@@ -163,7 +162,7 @@ docker compose -f docker/docker-compose.yml run --rm dashboard python3 scripts/d
 
 ## Mode 2: Dashboard
 
-For interactive exploration and pipeline backfill via the UI.
+For interactive exploration and pipeline runs by category.
 
 ### Start the Dashboard
 
@@ -175,9 +174,9 @@ Access at `http://localhost:8501`. The dashboard runs Bronze → Silver → Gold
 
 ### Run Pipeline (sidebar)
 
-**Ingestion date** — Pick a date and click **Run Pipeline** to execute Bronze → Silver → Gold for that batch. Runs **Fetch (if needed) → Bronze → Silver → Gold**. Raw data is auto-fetched from McAuley Lab when none is staged. Cache is cleared on success. Pipeline logs in "View pipeline log" expander.
+**Category** — Select a category (e.g. Gift_Cards, All_Beauty) and click **Run Pipeline** to execute Bronze → Silver → Gold for that category. Runs **Fetch (if needed) → Bronze → Silver → Gold**. Raw data is auto-fetched from McAuley Lab when the category is not staged. Cache is cleared on success. Pipeline logs in "View pipeline log" expander.
 
-*Source data is static (up to 2023); the date is a batch label, not new data.*
+*Source data is static (up to 2023); processing is scoped by category, not date.*
 
 **Note:** Spark startup can take 1–2 minutes in Docker. The page will update when the pipeline finishes. Progress is streamed to the sidebar.
 

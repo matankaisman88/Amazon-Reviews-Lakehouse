@@ -53,7 +53,7 @@ if [[ -z "${FETCH_SKIP:-}" ]]; then
 fi
 
 echo "Starting Amazon Bronze Ingestion..."
-./scripts/run_amazon_bronze.sh "${INGESTION_DATE}"
+./scripts/run_amazon_bronze.sh "${INGESTION_DATE}" ${CATEGORY_ARG:+--category=$CATEGORY_ARG}
 
 echo "Starting Amazon Silver Transformation (incremental)..."
 ./scripts/run_amazon_silver.sh "${INGESTION_DATE}" "${SILVER_EXTRA[@]}"
