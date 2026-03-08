@@ -1,0 +1,110 @@
+# Amazon Reviews Lakehouse - Docker Compose
+# Spark Master, 1 Worker, History Server, Dashboard
+
+services:
+  spark-master:
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile
+    image: amazon-lakehouse-spark:latest
+    container_name: spark-master
+    ports:
+      - "7077:7077"
+      - "8080:8080"
+    environment:
+      - SPARK_MASTER_HOST=spark-master
+      - SPARK_MASTER_PORT=7077
+      - SPARK_MASTER_WEBUI_PORT=8080
+      - SPARK_EVENTLOG_ENABLED=true
+      - SPARK_EVENTLOG_DIR=/opt/spark-events
+      - PYTHONPATH=/opt/spark-app
+    volumes:
+      - ../data:/data
+      - ../data/spark-events:/opt/spark-events
+      - ../src:/opt/spark-app/src
+      - ../config:/opt/spark-app/config
+    command: /opt/spark/bin/spark-class org.apache.spark.deploy.master.Master
+    networks:
+      - spark-net
+
+  spark-worker:
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile
+    image: amazon-lakehouse-spark:latest
+    container_name: spark-worker
+    depends_on:
+      - spark-master
+    environment:
+      - SPARK_MASTER=spark://spark-master:7077
+      - SPARK_WORKER_CORES=4
+      - SPARK_WORKER_MEMORY=8G
+      - SPARK_EXECUTOR_MEMORY=2G
+      - SPARK_EVENTLOG_ENABLED=true
+      - SPARK_EVENTLOG_DIR=/opt/spark-events
+    volumes:
+      - ../data:/data
+      - ../data/spark-events:/opt/spark-events
+      - ../src:/opt/spark-app/src
+      - ../config:/opt/spark-app/config
+    command: /opt/spark/bin/spark-class org.apache.spark.deploy.worker.Worker spark://spark-master:7077
+    deploy:
+      resources:
+        limits:
+          memory: 8G
+    networks:
+      - spark-net
+
+  history-server:
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile
+    image: amazon-lakehouse-spark:latest
+    container_name: spark-history
+    depends_on:
+      - spark-master
+    ports:
+      - "18080:18080"
+    environment:
+      - SPARK_HISTORY_OPTS=-Dspark.history.fs.logDirectory=/opt/spark-events
+    volumes:
+      - ../data/spark-events:/opt/spark-events
+    command: /opt/spark/bin/spark-class org.apache.spark.deploy.history.HistoryServer
+    networks:
+      - spark-net
+
+  dashboard:
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile
+    image: amazon-lakehouse-spark:latest
+    container_name: dashboard
+    depends_on:
+      - spark-master
+    env_file:
+      - ../.env
+    environment:
+      - PYTHONPATH=/opt/spark-app
+      # Set your OpenAI API key here or in a .env file at the project root.
+      # The AI Query feature will be disabled if this variable is not provided.
+      - OPENAI_API_KEY=${OPENAI_API_KEY:-}
+      # Optional: override the model (default: gpt-4o-mini)
+      - OPENAI_MODEL=${OPENAI_MODEL:-gpt-4o-mini}
+    working_dir: /opt/spark-app
+    volumes:
+      - ../data:/data
+      - ../data/spark-events:/opt/spark-events
+      - ../src:/opt/spark-app/src
+      - ../config:/opt/spark-app/config
+      - ../.streamlit:/opt/spark-app/.streamlit
+      # Mount scripts so the Manual Refresh button can invoke them
+      - ../scripts:/opt/spark-app/scripts
+      # Mount .env so load_dotenv() can load OPENAI_API_KEY (env_file path can fail on Windows)
+      - ../.env:/opt/spark-app/.env:ro
+    ports:
+      - "8501:8501"
+    command: streamlit run src/dashboard/app.py --server.port=8501 --server.address=0.0.0.0
+
+networks:
+  spark-net:
+    driver: bridge

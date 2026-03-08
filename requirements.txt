@@ -1,0 +1,13 @@
+pyspark>=3.5.0
+delta-spark==3.2.0
+great-expectations>=0.18.0
+pytest>=7.0
+pytest-spark>=0.8.0
+python-dotenv>=1.0.0
+pyyaml>=6.0
+boto3>=1.28.0
+ruff>=0.1.0
+streamlit>=1.36.0
+plotly>=5.20.0
+deltalake>=0.17.0
+openai>=1.0.0,<2.0.0

@@ -1,0 +1,27 @@
+[project]
+name = "amazon-reviews-lakehouse"
+version = "0.1.0"
+requires-python = ">=3.10"
+dependencies = [
+    "pyspark>=3.5.0",
+    "delta-spark>=3.0.0",
+    "great-expectations>=0.18.0",
+    "pytest>=7.0",
+    "pytest-spark>=0.8.0",
+    "python-dotenv>=1.0.0",
+    "pyyaml>=6.0",
+    "boto3>=1.28.0",
+    "ruff>=0.1.0",
+]
+
+[tool.ruff]
+target-version = "py310"
+line-length = 100
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "N", "W"]
+ignore = []
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["."]

@@ -1,0 +1,16 @@
+# Dark sidebar, light main content (matches mockup)
+[theme]
+base = "light"
+primaryColor = "#2563eb"
+backgroundColor = "#f8fafc"
+secondaryBackgroundColor = "#ffffff"
+textColor = "#0f172a"
+# Dark code blocks for SQL (AI Query)
+codeBackgroundColor = "#1e293b"
+codeTextColor = "#e2e8f0"
+
+[theme.sidebar]
+backgroundColor = "#1e293b"
+secondaryBackgroundColor = "#334155"
+textColor = "#e2e8f0"
+primaryColor = "#2563eb"

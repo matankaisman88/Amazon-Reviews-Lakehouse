@@ -1,0 +1,21 @@
+{
+  "expectation_suite_name": "amazon_silver_suite",
+  "expectations": [
+    {
+      "expectation_type": "expect_column_values_to_not_be_null",
+      "kwargs": {"column": "review_id"}
+    },
+    {
+      "expectation_type": "expect_column_values_to_not_be_null",
+      "kwargs": {"column": "parent_asin"}
+    },
+    {
+      "expectation_type": "expect_column_values_to_be_between",
+      "kwargs": {"column": "rating", "min_value": 1, "max_value": 5}
+    },
+    {
+      "expectation_type": "expect_column_values_to_be_greater_than_or_equal_to",
+      "kwargs": {"column": "helpful_vote", "value": 0}
+    }
+  ]
+}

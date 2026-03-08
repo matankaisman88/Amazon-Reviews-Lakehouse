@@ -1,0 +1,8 @@
+# Great Expectations Checkpoint: Amazon Silver to Gold
+# Validates Silver DataFrame before Gold aggregation
+# Used by quality_checks.validate_silver (Spark-based implementation)
+
+name: amazon_silver_checkpoint
+config_version: 1.0
+expectation_suite_name: amazon_silver_suite
+validations: []
