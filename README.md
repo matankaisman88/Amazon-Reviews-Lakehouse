@@ -84,7 +84,7 @@ For running the pipeline via scripts (e.g. cron, CI, or one-off backfills).
 
 ### Step 1: Fetch Raw Data (or use sample)
 
-Raw data is **auto-fetched** from [McAuley Lab (UCSD)](https://mcauleylab.ucsd.edu/public_datasets/data/amazon/) when you run the pipeline and none is staged. The fetch script downloads category files and maps older formats to the 2023 schema. To fetch manually:
+Raw data is **auto-fetched** from [McAuley Lab (UCSD)](https://mcauleylab.ucsd.edu/public_datasets/data/amazon/) when you run the pipeline and none is staged. When you pass `--category=X`, the pipeline fetches that category if its raw files are missing (even when other categories exist). To fetch manually:
 
 ```bash
 # Fetch Gift_Cards (small, ~3.6MB) — default for quick start
@@ -126,7 +126,7 @@ docker compose -f docker/docker-compose.yml up -d spark-master spark-worker hist
 ./scripts/run_pipeline.sh                     # Bronze -> Silver -> Gold (full Medallion)
 ./scripts/run_pipeline.sh 2024-01-01          # Specific ingestion_date
 ./scripts/run_pipeline.sh 2025-01-01 --skip-optimize  # Backfill without OPTIMIZE
-./scripts/run_pipeline.sh 2025-01-01 --category=Gift_Cards  # Scope to one category
+./scripts/run_pipeline.sh 2025-01-01 --category=Gift_Cards  # Scope to one category; auto-fetches that category if missing
 ```
 
 #### PowerShell
@@ -145,6 +145,19 @@ PYTHONPATH=. python -m src.jobs.amazon_bronze_ingestion [YYYY-MM-DD]
 ### Step 4: History Server
 
 Open `http://localhost:18080` after job completion.
+
+### Debug: Layer Count Audit
+
+To investigate data loss between stages (Raw → Bronze → Silver → Gold):
+
+```bash
+# Via Docker (recommended)
+./scripts/run_debug_layer_counts.sh --category Gift_Cards
+./scripts/run_debug_layer_counts.sh   # All categories
+
+# Or directly
+docker compose -f docker/docker-compose.yml run --rm dashboard python3 scripts/debug_layer_counts.py --category Gift_Cards
+```
 
 ---
 
@@ -257,6 +270,9 @@ For declining products (rating drop > 0.5 vs previous week), use **Generate AI R
 │   ├── run_amazon_bronze.sh # Bronze stage only
 │   ├── run_amazon_silver.sh # Silver stage only
 │   ├── run_amazon_gold.sh   # Gold stage only
+│   ├── debug_layer_counts.py   # Audit Raw/Bronze/Silver/Gold row counts (per category)
+│   ├── run_debug_layer_counts.sh   # Run debug via Docker (bash)
+│   ├── run_debug_layer_counts.ps1  # Run debug via Docker (PowerShell)
 │   ├── create_amazon_sample.py  # Generate synthetic sample JSONL.gz
 │   └── drop_raw.sh          # Remove raw files after pipeline (optional)
 │
