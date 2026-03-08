@@ -237,34 +237,22 @@ def _run_refresh_flow(target_date: str) -> None:
 
 
 def _render_refresh_button() -> None:
-    """Render the Amazon Bronze -> Silver -> Gold refresh controls."""
-    from src.utils.pipeline_orchestrator import yesterday
-
+    """Render the Amazon Bronze -> Silver -> Gold pipeline controls."""
     st.sidebar.header("DATA MANAGEMENT")
     st.sidebar.caption(
         "Run the Amazon Medallion pipeline against staged raw Amazon review files. "
-        "This executes Bronze -> Silver -> Gold."
+        "This executes Bronze → Silver → Gold. Source data is static (up to 2023)."
     )
 
-    target_yesterday = yesterday()
-    if st.sidebar.button(
-        f"Run Daily Refresh ({target_yesterday})",
-        type="primary",
-        key="refresh_yesterday",
-        use_container_width=True,
-    ):
-        _run_refresh_flow(target_yesterday)
-
-    with st.sidebar.expander("Advanced: Manual Backfill", expanded=False):
-        backfill_date = st.date_input(
-            "Select ingestion date",
-            value=date.today() - timedelta(days=1),
-            min_value=date(2020, 1, 1),
-            max_value=date.today(),
-            key="backfill_date",
-        )
-        if st.button("Run Backfill", key="run_backfill", use_container_width=True):
-            _run_refresh_flow(backfill_date.strftime("%Y-%m-%d"))
+    backfill_date = st.sidebar.date_input(
+        "Ingestion date",
+        value=date.today() - timedelta(days=1),
+        min_value=date(2020, 1, 1),
+        max_value=date.today(),
+        key="backfill_date",
+    )
+    if st.sidebar.button("Run Pipeline", type="primary", key="run_backfill", use_container_width=True):
+        _run_refresh_flow(backfill_date.strftime("%Y-%m-%d"))
 
     st.sidebar.divider()
 

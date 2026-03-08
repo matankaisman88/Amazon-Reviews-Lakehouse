@@ -69,7 +69,7 @@ Two ways to process data:
 | Mode | Use case | How |
 |------|----------|-----|
 | **1. Manual Pipeline** | Scripts, CI/CD, custom dates | Run `run_pipeline.sh` (auto-fetches raw data if needed) |
-| **2. Dashboard** | Interactive UI, daily refresh, backfill | Start dashboard → Use **Refresh** or **Manual Backfill** (auto-fetches if needed) |
+| **2. Dashboard** | Interactive UI, backfill | Start dashboard → Use **Run Pipeline** (auto-fetches if needed) |
 
 ---
 
@@ -163,7 +163,7 @@ docker compose -f docker/docker-compose.yml run --rm dashboard python3 scripts/d
 
 ## Mode 2: Dashboard
 
-For interactive exploration, daily refresh, and manual backfill via the UI.
+For interactive exploration and pipeline backfill via the UI.
 
 ### Start the Dashboard
 
@@ -173,12 +173,11 @@ docker compose -f docker/docker-compose.yml up -d dashboard
 
 Access at `http://localhost:8501`. The dashboard runs Bronze → Silver → Gold via a **subprocess** (isolated from the UI; no separate Spark cluster required for refresh).
 
-### Refresh Data (sidebar)
+### Run Pipeline (sidebar)
 
-1. **Refresh Yesterday's Data** — One-click pipeline for yesterday.
-2. **Advanced: Manual Backfill** — Date picker to run the pipeline for any past date.
+**Ingestion date** — Pick a date and click **Run Pipeline** to execute Bronze → Silver → Gold for that batch. Runs **Fetch (if needed) → Bronze → Silver → Gold**. Raw data is auto-fetched from McAuley Lab when none is staged. Cache is cleared on success. Pipeline logs in "View pipeline log" expander.
 
-Both run **Fetch (if needed) → Bronze → Silver → Gold**. Raw data is auto-fetched from McAuley Lab when none is staged. Cache is cleared on success. Pipeline logs in "View pipeline log" expander.
+*Source data is static (up to 2023); the date is a batch label, not new data.*
 
 **Note:** Spark startup can take 1–2 minutes in Docker. The page will update when the pipeline finishes. Progress is streamed to the sidebar.
 
