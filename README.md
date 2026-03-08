@@ -100,7 +100,7 @@ python scripts/fetch_amazon_data.py --categories Gift_Cards All_Beauty
 python scripts/fetch_amazon_data.py --categories all
 ```
 
-**Size control:** Set `fetch.max_rows_per_category` in `config/config.yaml` (default: 10000) to limit auto-fetch size. Override with `--max-rows N` or `FETCH_MAX_ROWS=N` env var. Use `null` for no limit.
+**Size control:** Set `fetch.max_rows_per_category` in `config/config.yaml` (default: 10000) to limit auto-fetch size. Override with `--max-rows N` or `FETCH_MAX_ROWS=N` env var. Use `null` for no limit. Full-category downloads (e.g. Video_Games ~347MB) use streaming to avoid OOM.
 
 Or generate synthetic sample data:
 
@@ -174,7 +174,11 @@ Access at `http://localhost:8501`. The dashboard runs Bronze → Silver → Gold
 
 ### Run Pipeline (sidebar)
 
-**Category** — Select a category (e.g. Gift_Cards, All_Beauty) and click **Run Pipeline** to execute Bronze → Silver → Gold for that category. Runs **Fetch (if needed) → Bronze → Silver → Gold**. Raw data is auto-fetched from McAuley Lab when the category is not staged. Cache is cleared on success. Pipeline logs in "View pipeline log" expander.
+**Category** — Select a category (e.g. Gift_Cards, All_Beauty) and click **Run Pipeline** to execute Bronze → Silver → Gold for that category. Runs **Fetch (if needed) → Bronze → Silver → Gold**. Raw data is auto-fetched from McAuley Lab when the category is not staged.
+
+**Fetch options** (expander) — Set **Max rows per category** when fetching (default: 10,000), or check **Unlimited rows** for full download. Check **Force re-fetch** to overwrite existing raw files (e.g. to replace a limited fetch with unlimited). Fetch streams large files to avoid OOM.
+
+Cache is cleared on success. Pipeline logs in "View pipeline log" expander.
 
 *Source data is static (up to 2023); processing is scoped by category, not date.*
 
@@ -217,9 +221,10 @@ For declining products (rating drop > 0.5 vs previous week), use **Generate AI R
 - `spark.sql.adaptive.enabled=true` — AQE coalesces shuffle partitions at runtime.
 - `spark.sql.shuffle.partitions=8` — Tuned for small batches (3MB–100K rows); increase to 200 for large datasets.
 - `spark.memory.fraction=0.5` — Leaves headroom for JVM on constrained env (1–2GB RAM).
-- `spark.max_partition_bytes` — Max bytes per partition for file scans (default `128m`). Increase to `256m` for 100k+ row batches.
+- `spark.max_partition_bytes` — Max bytes per partition for file scans (default `64m`). Smaller values reduce memory per task for large datasets.
 - `gold.optimize_threshold_rows=100000` — OPTIMIZE/Z-ORDER runs only above this; skip for small batches to avoid rewrite overhead.
 - Default executor memory is `1g`; increase `spark.executor.memory` (e.g. `2g`) when RAM permits.
+- **Full-category datasets** (e.g. Video_Games ~347MB): config uses `driver_memory: 2g` and `max_partition_bytes: 64m`; dashboard has `mem_limit: 4g`. Reduce `max_rows_per_category` if OOM persists.
 - Run Silver/Gold incrementally by passing an `ingestion_date` or `--category=` to scope work.
 
 ## Project Structure
@@ -265,7 +270,7 @@ For declining products (rating drop > 0.5 vs previous week), use **Generate AI R
 │       └── spark_session.py         # SparkSession builder with Delta extensions
 │
 ├── scripts/
-│   ├── fetch_amazon_data.py # Download raw JSONL.gz from McAuley Lab (UCSD)
+│   ├── fetch_amazon_data.py # Download raw JSONL.gz from McAuley Lab (streaming; no OOM on large files)
 │   ├── run_refresh_standalone.py  # Pipeline for dashboard refresh (subprocess; prints progress to stdout)
 │   ├── run_pipeline.sh      # Full Medallion (auto-fetches if needed): Bronze → Silver → Gold
 │   ├── run_amazon_bronze.sh # Bronze stage only

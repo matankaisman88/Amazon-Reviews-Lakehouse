@@ -36,11 +36,16 @@ def _count_raw_files(raw_root: Path) -> int:
     return sum(1 for _ in raw_root.rglob("*.jsonl.gz"))
 
 
-def run_refresh(category: Optional[str] = None) -> Iterator[str]:
+def run_refresh(
+    category: Optional[str] = None,
+    max_rows: Optional[int] = None,
+    overwrite_raw: bool = False,
+) -> Iterator[str]:
     """
     Full pipeline: Bronze -> Silver -> Gold for the Amazon Reviews pipeline.
 
     Scoped by category. Uses today as ingestion_date (batch label).
+    max_rows: limit rows per category when fetching (None = no limit).
     Yields human-readable progress lines throughout.
     Raises RuntimeError on unrecoverable failure.
     """
@@ -49,16 +54,26 @@ def run_refresh(category: Optional[str] = None) -> Iterator[str]:
 
     yield f"[Orchestrator] Category: {cat}"
     yield f"[Orchestrator] Ingestion date (batch label): {ingest_date}"
+    if max_rows == 0:
+        yield "[Orchestrator] Max rows per category (fetch): unlimited"
+    elif max_rows is not None:
+        yield f"[Orchestrator] Max rows per category (fetch): {max_rows:,}"
+    else:
+        yield "[Orchestrator] Max rows per category (fetch): config default"
     raw_root = _amazon_raw_root()
     raw_count = _count_raw_files(raw_root)
     yield f"[Orchestrator] Amazon raw root: {raw_root}"
     yield f"[Orchestrator] Staged raw files: {raw_count}"
 
-    # Fetch category if raw files missing
+    # Fetch category if raw files missing, or force re-fetch when overwrite_raw
     review_file = raw_root / "reviews" / f"{cat}.jsonl.gz"
     meta_file = raw_root / "metadata" / f"meta_{cat}.jsonl.gz"
-    if not review_file.exists() or not meta_file.exists():
-        yield f"[Orchestrator] Category {cat} not staged. Fetching from McAuley Lab (UCSD)..."
+    need_fetch = not review_file.exists() or not meta_file.exists() or overwrite_raw
+    if need_fetch:
+        if overwrite_raw and review_file.exists():
+            yield f"[Orchestrator] Force re-fetch for {cat} (overwriting existing)..."
+        else:
+            yield f"[Orchestrator] Category {cat} not staged. Fetching from McAuley Lab (UCSD)..."
         try:
             import sys
             root = _project_root()
@@ -66,11 +81,19 @@ def run_refresh(category: Optional[str] = None) -> Iterator[str]:
             from src.utils.config_loader import get_fetch_config
             from fetch_amazon_data import run_fetch
             fetch_cfg = get_fetch_config()
+            # max_rows=0 means unlimited (from --max-rows=0); None means use config
+            if max_rows == 0:
+                fetch_max = None
+            elif max_rows is not None:
+                fetch_max = max_rows
+            else:
+                fetch_max = fetch_cfg.get("max_rows_per_category")
             fetched = run_fetch(
                 categories=[cat],
                 raw_root=raw_root,
-                overwrite=False,
-                max_rows=fetch_cfg.get("max_rows_per_category"),
+                overwrite=overwrite_raw,
+                max_rows=fetch_max,
+                use_config_if_none=(max_rows != 0),  # False when unlimited (0), else use config when None
             )
             yield f"[Orchestrator] Fetched {fetched} file(s)."
         except Exception as exc:

@@ -2,8 +2,10 @@
 Standalone script to run the pipeline and print progress to stdout.
 Used by the dashboard so the pipeline runs in a subprocess and doesn't block Streamlit.
 
-Usage: python scripts/run_refresh_standalone.py [--category=Category]
+Usage: python scripts/run_refresh_standalone.py [--category=Category] [--max-rows=N] [--overwrite-raw]
   --category=Gift_Cards  (default: Gift_Cards)
+  --max-rows=N           limit rows per category when fetching (omit for config default; 0 = unlimited)
+  --overwrite-raw        re-fetch and overwrite existing raw files
 """
 import os
 import sys
@@ -15,11 +17,21 @@ os.chdir(project_root)
 
 if __name__ == "__main__":
     category = None
+    max_rows = None
+    overwrite_raw = False
     for arg in sys.argv[1:]:
         if arg.startswith("--category="):
             category = arg.split("=", 1)[1]
-            break
+        elif arg.startswith("--max-rows="):
+            val = arg.split("=", 1)[1]
+            # 0 = unlimited (pass through); null/empty = use config; else int
+            if val in ("null", ""):
+                max_rows = None
+            else:
+                max_rows = 0 if val == "0" else int(val)
+        elif arg == "--overwrite-raw":
+            overwrite_raw = True
     from src.utils.pipeline_orchestrator import run_refresh
 
-    for line in run_refresh(category=category):
+    for line in run_refresh(category=category, max_rows=max_rows, overwrite_raw=overwrite_raw):
         print(line, flush=True)

@@ -1,6 +1,7 @@
 pyspark>=3.5.0
 delta-spark==3.2.0
 great-expectations>=0.18.0
+ijson>=3.2.0
 pytest>=7.0
 pytest-spark>=0.8.0
 python-dotenv>=1.0.0

@@ -5,6 +5,7 @@ USER root
 
 # Install Python dependencies
 RUN pip install --no-cache-dir \
+    "ijson>=3.2.0" \
     "urllib3<2.0.0" \
     "delta-spark==3.2.0" \
     "great-expectations>=0.18.0" \

@@ -174,7 +174,11 @@ def _format_rating(value: float) -> str:
     return f"{value:.2f}"
 
 
-def _run_refresh_flow(category: str) -> None:
+def _run_refresh_flow(
+    category: str,
+    max_rows: Optional[int] = None,
+    overwrite_raw: bool = False,
+) -> None:
     """Execute the Amazon pipeline for category in a subprocess."""
     import subprocess
     import sys
@@ -192,10 +196,19 @@ def _run_refresh_flow(category: str) -> None:
         "Spark startup can take 1–2 minutes in Docker. The page will update when the pipeline finishes."
     )
 
+    cmd = [sys.executable, str(script_path), f"--category={category}"]
+    if max_rows is not None:
+        cmd.append(f"--max-rows={max_rows}")
+    else:
+        # Unlimited: pass 0 so orchestrator uses no limit (not config default)
+        cmd.append("--max-rows=0")
+    if overwrite_raw:
+        cmd.append("--overwrite-raw")
+
     try:
         with st.spinner(f"Running pipeline for {category}..."):
             proc = subprocess.Popen(
-                [sys.executable, str(script_path), f"--category={category}"],
+                cmd,
                 stdout=subprocess.PIPE,
                 stderr=subprocess.STDOUT,
                 text=True,
@@ -263,8 +276,28 @@ def _render_refresh_button() -> None:
         index=pipeline_cats.index("Gift_Cards") if "Gift_Cards" in pipeline_cats else 0,
         key="pipeline_category",
     )
+
+    with st.sidebar.expander("Fetch options", expanded=True):
+        unlimited_rows = st.checkbox("Unlimited rows", value=False, key="fetch_unlimited")
+        if unlimited_rows:
+            fetch_max_rows: Optional[int] = None
+        else:
+            fetch_max_rows = st.number_input(
+                "Max rows per category",
+                min_value=1,
+                value=10000,
+                step=1000,
+                key="fetch_max_rows",
+            )
+        overwrite_raw = st.checkbox(
+            "Force re-fetch (overwrite existing raw files)",
+            value=False,
+            key="fetch_overwrite",
+            help="Re-download even if raw files exist. Use with Unlimited to replace a limited fetch.",
+        )
+
     if st.sidebar.button("Run Pipeline", type="primary", key="run_pipeline", use_container_width=True):
-        _run_refresh_flow(pipeline_category)
+        _run_refresh_flow(pipeline_category, max_rows=fetch_max_rows, overwrite_raw=overwrite_raw)
 
     st.sidebar.divider()
 

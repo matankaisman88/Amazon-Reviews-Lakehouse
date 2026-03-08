@@ -19,12 +19,12 @@ fetch:
   default_categories: ["Gift_Cards"]
   max_rows_per_category: 10000  # set to null for full download
 
-# Spark tuning - optimized for small batches (3MB-100K rows) on 1-2GB RAM.
-# For large datasets, increase shuffle_partitions and max_partition_bytes.
+# Spark tuning - dashboard runs in local mode (driver = executor).
+# For full-category datasets (300MB+), driver_memory 2g+ is required.
 spark:
   executor_memory: 2g  # Use 2g if RAM permits; 1g for 1-2GB total env
-  driver_memory: 512m  # Leave headroom for JVM; reduce if OOM on constrained env
-  max_partition_bytes: 128m  # 256m if memory permits; reduces task count for 100k+ row batches
+  driver_memory: 2g  # 2g for large categories (Video_Games ~347MB); 512m for small batches only
+  max_partition_bytes: 64m  # Smaller = less memory per task; helps avoid OOM on large datasets
   memory_fraction: 0.5  # Lower = more JVM headroom, less GC pressure on constrained env
   memory_storage_fraction: 0.3  # Less cache, more execution memory for small batches
   shuffle_partitions: 8  # 200 creates massive overhead for 3MB; use 8 for small batches

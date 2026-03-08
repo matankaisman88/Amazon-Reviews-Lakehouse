@@ -76,6 +76,7 @@ def _download_and_convert_to_jsonl(
 ) -> bool:
     """
     Download gzipped JSON/JSONL and save as .jsonl.gz.
+    Streams to avoid OOM on large files (e.g. Video_Games 347MB).
     Handles both JSON array and JSONL (one JSON per line) formats.
     Maps older Amazon format (overall, reviewText, summary) to 2023 schema.
     """
@@ -89,65 +90,70 @@ def _download_and_convert_to_jsonl(
         tmp_path = Path(tempfile.gettempdir()) / f"amazon_fetch_{os.getpid()}_{dest.stem}.gz"
         urlretrieve(url, tmp_path)
         try:
+            is_meta = "meta_" in dest.name
+            written = 0
+
+            # Peek at format (array vs JSONL) without loading full file
             with gzip.open(tmp_path, "rt", encoding="utf-8") as f_in:
-                content = f_in.read()
+                first_chunk = f_in.read(1024)
+
+            if first_chunk.strip().startswith("["):
+                # JSON array: stream with ijson to avoid loading full file into memory
+                import ijson
+                with gzip.open(tmp_path, "rb") as f_in:
+                    with gzip.open(dest, "wt", encoding="utf-8") as f_out:
+                        for obj in ijson.items(f_in, "item"):
+                            if max_rows is not None and written >= max_rows:
+                                break
+                            try:
+                                if "overall" in obj:
+                                    row = _map_to_2023_review(obj)
+                                elif is_meta and "main_category" not in obj:
+                                    row = _map_to_2023_meta(obj)
+                                else:
+                                    row = obj
+                                f_out.write(json.dumps(row, default=str) + "\n")
+                            except Exception:
+                                f_out.write(json.dumps(obj, default=str) + "\n")
+                            written += 1
+            else:
+                # JSONL: stream line by line
+                with gzip.open(tmp_path, "rt", encoding="utf-8") as f_in:
+                    with gzip.open(dest, "wt", encoding="utf-8") as f_out:
+                        for line in f_in:
+                            if max_rows is not None and written >= max_rows:
+                                break
+                            line = line.strip()
+                            if not line:
+                                continue
+                            try:
+                                obj = json.loads(line)
+                            except json.JSONDecodeError:
+                                try:
+                                    obj = ast.literal_eval(line)
+                                except (ValueError, SyntaxError):
+                                    continue
+                            if obj is None:
+                                continue
+                            try:
+                                if "overall" in obj:
+                                    row = _map_to_2023_review(obj)
+                                elif is_meta and "main_category" not in obj:
+                                    row = _map_to_2023_meta(obj)
+                                else:
+                                    row = obj
+                                f_out.write(json.dumps(row, default=str) + "\n")
+                            except Exception:
+                                f_out.write(json.dumps(obj, default=str) + "\n")
+                            written += 1
         finally:
             tmp_path.unlink(missing_ok=True)
 
-        is_meta = "meta_" in dest.name
-
-        def parse_line(line: str):
-            """Parse JSON or Python literal (single-quoted dict)."""
-            try:
-                return json.loads(line)
-            except json.JSONDecodeError:
-                try:
-                    return ast.literal_eval(line)
-                except (ValueError, SyntaxError):
-                    return None
-
-        def parse_content():
-            content_stripped = content.strip()
-            if content_stripped.startswith("["):
-                try:
-                    return json.loads(content_stripped), True
-                except json.JSONDecodeError:
-                    try:
-                        return ast.literal_eval(content_stripped), True
-                    except (ValueError, SyntaxError):
-                        pass
-            rows = []
-            for line in content_stripped.splitlines():
-                if not line.strip():
-                    continue
-                obj = parse_line(line)
-                if obj is not None:
-                    rows.append(obj)
-            return rows, False
-
-        arr, is_array = parse_content()
-        if not arr:
-            raise ValueError("No valid JSON objects found")
-
         if max_rows is not None:
-            arr = arr[:max_rows]
             print(f"  Limiting to {max_rows} rows")
 
-        with gzip.open(dest, "wt", encoding="utf-8") as f_out:
-            for obj in arr:
-                try:
-                    if "overall" in obj:
-                        row = _map_to_2023_review(obj)
-                    elif is_meta and "main_category" not in obj:
-                        row = _map_to_2023_meta(obj)
-                    else:
-                        row = obj
-                    f_out.write(json.dumps(row, default=str) + "\n")
-                except Exception:
-                    f_out.write(json.dumps(obj, default=str) + "\n")
-
         size_mb = dest.stat().st_size / (1024 * 1024)
-        print(f"  Done: {dest.name} ({size_mb:.1f} MB)")
+        print(f"  Done: {dest.name} ({size_mb:.1f} MB, {written} rows)")
         return True
     except Exception as e:
         print(f"  Download failed: {e}")
@@ -227,17 +233,19 @@ def run_fetch(
     raw_root: Optional[Path] = None,
     overwrite: bool = False,
     max_rows: Optional[int] = None,
+    use_config_if_none: bool = True,
 ) -> int:
     """
     Programmatic fetch: download Amazon Reviews 2023 data.
     Returns count of files downloaded.
-    If max_rows is None, reads from config fetch.max_rows_per_category.
+    If max_rows is None and use_config_if_none, reads from config fetch.max_rows_per_category.
+    If max_rows is None and not use_config_if_none, no limit (full download).
     """
     raw_root = raw_root or _raw_root()
     categories = categories or ["Gift_Cards"]
     if len(categories) == 1 and categories[0].lower() == "all":
         categories = ALL_CATEGORIES
-    if max_rows is None:
+    if max_rows is None and use_config_if_none:
         try:
             from src.utils.config_loader import get_fetch_config
             max_rows = get_fetch_config().get("max_rows_per_category")

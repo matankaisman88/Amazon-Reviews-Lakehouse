@@ -81,6 +81,7 @@ services:
     container_name: dashboard
     depends_on:
       - spark-master
+    mem_limit: 4g  # Needed for full-category pipeline (e.g. Video_Games 347MB)
     env_file:
       - ../.env
     environment:
