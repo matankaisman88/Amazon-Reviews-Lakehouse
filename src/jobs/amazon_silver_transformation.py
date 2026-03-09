@@ -46,7 +46,8 @@ def _apply_filters(
 
 
 def _build_silver_df(reviews_df: DataFrame, metadata_df: DataFrame) -> DataFrame:
-    """Normalize Bronze reviews and enrich them with selected product metadata."""
+    """Normalize Bronze reviews and enrich them with selected product metadata.
+    Deduplication runs before the join to reduce shuffle volume."""
     reviews = (
         reviews_df.withColumn(
             "review_id",
@@ -65,6 +66,7 @@ def _build_silver_df(reviews_df: DataFrame, metadata_df: DataFrame) -> DataFrame
         .withColumnRenamed("title", "review_title")
         .withColumnRenamed("text", "review_text")
         .withColumnRenamed("timestamp", "raw_timestamp")
+        .dropDuplicates(["review_id"])
     )
 
     metadata = (
@@ -91,7 +93,7 @@ def _build_silver_df(reviews_df: DataFrame, metadata_df: DataFrame) -> DataFrame
     )
 
     silver_cols = [field.name for field in AMAZON_REVIEW_SILVER_SCHEMA.fields]
-    result = silver.select(*silver_cols).dropDuplicates(["review_id"])
+    result = silver.select(*silver_cols)
     try:
         from src.utils.debug_explain import log_explain
         log_explain(result, label="silver_build", mode="formatted")

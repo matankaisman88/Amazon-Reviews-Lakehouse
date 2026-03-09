@@ -170,7 +170,7 @@ For interactive exploration and pipeline runs by category.
 docker compose -f docker/docker-compose.yml up -d dashboard
 ```
 
-Access at `http://localhost:8501`. The dashboard runs Bronze → Silver → Gold via a **subprocess** (isolated from the UI; no separate Spark cluster required for refresh).
+This starts the dashboard and its dependencies (`spark-master`, `spark-worker`). Access at `http://localhost:8501`. The dashboard runs Bronze → Silver → Gold via a **subprocess** (isolated from the UI). **Start the Spark cluster first** (`spark-master`, `spark-worker`) so the dashboard can submit jobs to it; the dashboard is on `spark-net` and uses `SPARK_MASTER=spark://spark-master:7077`.
 
 ### Run Pipeline (sidebar)
 
@@ -214,6 +214,7 @@ For declining products (rating drop > 0.5 vs previous week), use **Generate AI R
 
 - **config/config.yaml** — Paths, Spark settings, dynamic config, AQE, GX checkpoint
 - **.env** — Overrides (copy from `.env.example`)
+- **Dashboard vs CLI**: Both use the Spark cluster when `spark-master` and `spark-worker` are running. The dashboard is on `spark-net` with `SPARK_MASTER=spark://spark-master:7077`; start the cluster before running the pipeline from the UI.
 - **.streamlit/config.toml** — Dashboard theme (dark sidebar, light main, dark code blocks)
 - **Debug**: Set `SPARK_DEBUG=1` or `debug.explain_enabled: true` in config to log `df.explain()` plans to `data/debug/`
 

@@ -32,9 +32,10 @@ spark:
   serializer: org.apache.spark.serializer.KryoSerializer
   event_log_enabled: true
   event_log_dir: /opt/spark-events
-  # AQE: coalesce and advisory partition size for scalable shuffle
+  # AQE: coalesce, advisory partition size, skew join for scalable shuffle
   advisory_partition_size: 134217728  # 128MB target per partition after coalesce
   coalesce_partitions_enabled: true
+  skew_join_enabled: true  # Handle skewed partitions (e.g. popular products)
 
 # Dynamic config: estimate input size and set shuffle_partitions automatically
 dynamic_config:

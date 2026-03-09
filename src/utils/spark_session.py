@@ -3,6 +3,7 @@ SparkSession builder with Delta Lake, History Server, and AQE tuning.
 Supports dynamic configuration based on input size.
 """
 
+import os
 from pathlib import Path
 from typing import List, Optional, Union
 
@@ -14,12 +15,14 @@ from .input_size_estimator import estimate_input_size_bytes
 
 
 def _apply_aqe_config(spark: SparkSession) -> None:
-    """Apply AQE settings from config (advisory partition size, coalesce)."""
+    """Apply AQE settings from config (advisory partition size, coalesce, skew join)."""
     cfg = get_spark_config()
     advisory = cfg.get("advisory_partition_size", 134217728)  # 128MB
     coalesce = cfg.get("coalesce_partitions_enabled", True)
+    skew_join = cfg.get("skew_join_enabled", True)
     spark.conf.set("spark.sql.adaptive.advisoryPartitionSizeInBytes", str(advisory))
     spark.conf.set("spark.sql.adaptive.coalescePartitions.enabled", str(coalesce).lower())
+    spark.conf.set("spark.sql.adaptive.skewJoin.enabled", str(skew_join).lower())
 
 
 def apply_dynamic_config(
@@ -53,8 +56,9 @@ def get_spark_session(
         size_bytes = estimate_input_size_bytes(input_paths)
         shuffle_partitions = get_shuffle_partitions_for_input(size_bytes)
 
+    master = os.getenv("SPARK_MASTER", "local[*]")
     builder = (
-        SparkSession.builder.appName(app_name)
+        SparkSession.builder.master(master).appName(app_name)
         .config(
             "spark.sql.extensions",
             "io.delta.sql.DeltaSparkSessionExtension",

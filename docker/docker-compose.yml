@@ -81,12 +81,14 @@ services:
     container_name: dashboard
     depends_on:
       - spark-master
+      - spark-worker
     mem_limit: 4g  # Needed for full-category pipeline (e.g. Video_Games 347MB)
     env_file:
       - ../.env
     environment:
       - PYTHONPATH=/opt/spark-app
       - DATA_ROOT=/data
+      - SPARK_MASTER=spark://spark-master:7077
       # Set your OpenAI API key here or in a .env file at the project root.
       # The AI Query feature will be disabled if this variable is not provided.
       - OPENAI_API_KEY=${OPENAI_API_KEY:-}
@@ -106,6 +108,8 @@ services:
     ports:
       - "8501:8501"
     command: streamlit run src/dashboard/app.py --server.port=8501 --server.address=0.0.0.0
+    networks:
+      - spark-net
 
 networks:
   spark-net:

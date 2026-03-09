@@ -275,11 +275,11 @@ def run(
     if category:
         source_df = source_df.filter(F.col("category") == category)
 
-    # Coalesce to reduce task count: Silver partitioned by (category,year) ~24 partitions; legacy (category,review_date) had 500+.
-    # Auto-tune from Silver table size (same logic as shuffle_partitions).
+    # Repartition by category for data locality: aligns with Gold partitioning and window partitionBy(parent_asin, category).
+    # Auto-tune partition count from Silver table size (same logic as shuffle_partitions).
     silver_size_bytes = estimate_input_size_bytes(silver_path)
     max_partitions = get_shuffle_partitions_for_input(silver_size_bytes)
-    source_df = source_df.coalesce(max_partitions)
+    source_df = source_df.repartition(max_partitions, "category")
 
     # Cache source_df: used for 3 Gold tables; avoid re-scanning Silver 3x.
     source_df = source_df.cache()
