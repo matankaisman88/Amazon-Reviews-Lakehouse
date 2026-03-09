@@ -119,13 +119,15 @@ docker compose -f docker/docker-compose.yml up -d spark-master spark-worker hist
 #### Git Bash / WSL / Linux / macOS
 
 ```bash
-./scripts/run_amazon_bronze.sh [YYYY-MM-DD]   # Bronze only (optional ingestion_date; defaults to today)
-./scripts/run_amazon_silver.sh [YYYY-MM-DD]   # Silver only (optional ingestion_date)
-./scripts/run_amazon_gold.sh   [YYYY-MM-DD] [--skip-optimize]  # Gold only; --skip-optimize skips OPTIMIZE
-
+# Full pipeline (single Spark session — avoids 3× startup; recommended)
 ./scripts/run_pipeline.sh                     # Bronze -> Silver -> Gold (all staged categories)
 ./scripts/run_pipeline.sh --category=Gift_Cards  # Scope to one category; auto-fetches if missing
 ./scripts/run_pipeline.sh --category=All_Beauty --skip-optimize  # One category, skip Gold OPTIMIZE
+
+# Per-stage scripts (separate Spark sessions; use for debugging)
+./scripts/run_amazon_bronze.sh [YYYY-MM-DD]   # Bronze only (optional ingestion_date; defaults to today)
+./scripts/run_amazon_silver.sh [YYYY-MM-DD]   # Silver only (optional ingestion_date)
+./scripts/run_amazon_gold.sh   [YYYY-MM-DD] [--skip-optimize]  # Gold only; --skip-optimize skips OPTIMIZE
 ```
 
 #### PowerShell
@@ -215,6 +217,7 @@ For declining products (rating drop > 0.5 vs previous week), use **Generate AI R
 - **config/config.yaml** — Paths, Spark settings, dynamic config, AQE, GX checkpoint
 - **.env** — Overrides (copy from `.env.example`)
 - **Dashboard vs CLI**: Both use the Spark cluster when `spark-master` and `spark-worker` are running. The dashboard is on `spark-net` with `SPARK_MASTER=spark://spark-master:7077`; start the cluster before running the pipeline from the UI.
+- **Dashboard metadata**: Sidebar (categories, date range) loads via `deltalake` (no Spark) for fast startup.
 - **.streamlit/config.toml** — Dashboard theme (dark sidebar, light main, dark code blocks)
 - **Debug**: Set `SPARK_DEBUG=1` or `debug.explain_enabled: true` in config to log `df.explain()` plans to `data/debug/`
 
@@ -229,6 +232,9 @@ For declining products (rating drop > 0.5 vs previous week), use **Generate AI R
 - `spark.coalesce_partitions_enabled` — AQE coalesce for scalable shuffle.
 - `gold.optimize_threshold_rows` — Min rows in batch to run OPTIMIZE (default 100000).
 - `gold.optimize_threshold_size_mb` — Min table size (MB) to run OPTIMIZE; skips tiny tables to save DBUs (default 100).
+- `gold.small_input_threshold_bytes` — Below 10MB Silver size, use fewer partitions (default 10MB) for faster Gold.
+- `gold.small_output_coalesce` — Coalesce to N partitions before MERGE for small output (default 2).
+- **Gold parallel writes** — product_metrics, category_trends, and verified_purchase_impact are cached and written in parallel; Silver is read once (avoids 2× re-reads).
 - Default executor memory is `1g`; increase `spark.executor.memory` (e.g. `2g`) when RAM permits.
 - **Full-category datasets** (e.g. Video_Games ~347MB): config uses `driver_memory: 2g` and `max_partition_bytes: 64m`; dashboard has `mem_limit: 4g`. Shuffle partitions scale automatically with input size when `dynamic_config.enabled=true`.
 - Run Silver/Gold incrementally by passing an `ingestion_date` or `--category=` to scope work.
@@ -282,6 +288,8 @@ For declining products (rating drop > 0.5 vs previous week), use **Generate AI R
 │   ├── fetch_amazon_data.py # Download raw JSONL.gz from McAuley Lab (streaming; no OOM on large files)
 │   ├── run_refresh_standalone.py  # Pipeline for dashboard refresh (subprocess; prints progress to stdout)
 │   ├── run_pipeline.sh      # Full Medallion (auto-fetches if needed): Bronze → Silver → Gold
+│   ├── run_pipeline_unified.py    # Bronze → Silver → Gold in single Spark session
+│   ├── run_pipeline_spark_unified.sh  # Single spark-submit for unified pipeline
 │   ├── run_amazon_bronze.sh # Bronze stage only
 │   ├── run_amazon_silver.sh # Silver stage only
 │   ├── run_amazon_gold.sh   # Gold stage only

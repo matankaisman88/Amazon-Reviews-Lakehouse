@@ -66,31 +66,20 @@ def _normalize_review_date(df: pd.DataFrame) -> pd.DataFrame:
 
 @st.cache_data(show_spinner=False)
 def load_dashboard_metadata() -> Tuple[List[str], Optional[date], Optional[date]]:
-    """Load category list and date bounds from the Amazon category trends table."""
-    from src.utils.spark_session import get_spark_session
-
+    """Load category list and date bounds from the Amazon category trends table (no Spark)."""
     category_trends_path = _gold_table_path("category_trends")
     if not category_trends_path.exists():
         return [], None, None
 
-    spark = get_spark_session("AmazonDashboardMetadata")
-    trends = spark.read.format("delta").load(str(category_trends_path))
-    if trends.isEmpty():
+    table = DeltaTable(str(category_trends_path))
+    df = table.to_pandas()
+    if df.empty:
         return [], None, None
 
-    from pyspark.sql import functions as F
-
-    summary = trends.agg(
-        F.min("review_date").alias("min_review_date"),
-        F.max("review_date").alias("max_review_date"),
-    ).collect()[0]
-    categories = [
-        row.category
-        for row in trends.select("category").distinct().orderBy("category").collect()
-        if row.category
-    ]
-
-    return categories, summary.min_review_date, summary.max_review_date
+    min_date = pd.Timestamp(df["review_date"].min()).date()
+    max_date = pd.Timestamp(df["review_date"].max()).date()
+    categories = sorted(df["category"].dropna().unique().tolist())
+    return categories, min_date, max_date
 
 
 @st.cache_data(show_spinner=False)

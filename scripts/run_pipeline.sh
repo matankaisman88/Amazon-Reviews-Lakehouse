@@ -52,14 +52,8 @@ if [[ -z "${FETCH_SKIP:-}" ]]; then
   fi
 fi
 
-echo "Starting Amazon Bronze Ingestion..."
-./scripts/run_amazon_bronze.sh "${INGESTION_DATE}" ${CATEGORY_ARG:+--category=$CATEGORY_ARG}
-
-echo "Starting Amazon Silver Transformation (incremental)..."
-./scripts/run_amazon_silver.sh "${INGESTION_DATE}" "${SILVER_EXTRA[@]}"
-
-echo "Starting Amazon Gold Analytics (incremental)..."
-./scripts/run_amazon_gold.sh "${INGESTION_DATE}" "${GOLD_EXTRA[@]}"
+echo "Starting Amazon Medallion (Bronze -> Silver -> Gold, single Spark session)..."
+./scripts/run_pipeline_spark_unified.sh "${INGESTION_DATE}" ${CATEGORY_ARG:+--category=$CATEGORY_ARG} "${GOLD_EXTRA[@]}"
 
 echo "Amazon Medallion pipeline completed successfully."
 

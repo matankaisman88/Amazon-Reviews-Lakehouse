@@ -6,6 +6,7 @@ Gold Layer: Amazon review analytics and storage optimization.
 """
 
 import sys
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import timedelta
 from pathlib import Path
 from typing import List, Optional
@@ -25,6 +26,8 @@ from src.utils.config_loader import (
     get_paths,
     get_gold_optimize_threshold,
     get_gold_optimize_threshold_size_mb,
+    get_gold_small_input_threshold_bytes,
+    get_gold_small_output_coalesce,
     get_shuffle_partitions_for_input,
 )
 from src.utils.input_size_estimator import estimate_input_size_bytes
@@ -263,6 +266,8 @@ def run(
     spark.conf.set("spark.databricks.delta.schema.autoMerge.enabled", "true")
 
     silver_df = spark.read.format("delta").load(str(silver_root))
+    if category:
+        silver_df = silver_df.filter(F.col("category") == category)
     touched_df = _apply_filters(silver_df, category, ingestion_date)
     if touched_df.isEmpty():
         return
@@ -272,13 +277,13 @@ def run(
     source_df = silver_df.filter(
         (F.col("review_date") >= F.lit(source_start)) & (F.col("review_date") <= F.lit(output_end))
     )
-    if category:
-        source_df = source_df.filter(F.col("category") == category)
 
-    # Repartition by category for data locality: aligns with Gold partitioning and window partitionBy(parent_asin, category).
-    # Auto-tune partition count from Silver table size (same logic as shuffle_partitions).
     silver_size_bytes = estimate_input_size_bytes(silver_path)
-    max_partitions = get_shuffle_partitions_for_input(silver_size_bytes)
+    small_threshold = get_gold_small_input_threshold_bytes()
+    small_coalesce = get_gold_small_output_coalesce()
+    is_small_input = silver_size_bytes < small_threshold
+
+    max_partitions = small_coalesce if is_small_input else get_shuffle_partitions_for_input(silver_size_bytes)
     source_df = source_df.repartition(max_partitions, "category")
 
     # Cache source_df: used for 3 Gold tables; avoid re-scanning Silver 3x.
@@ -302,47 +307,72 @@ def run(
         source_df.unpersist()
         return
 
-    # Cache product_metrics for count + write; count drives conditional OPTIMIZE.
-    product_metrics_df = product_metrics_df.cache()
-    row_count = product_metrics_df.count()
-    source_df.unpersist()
-
     product_root = gold_root / "product_metrics"
     category_root = gold_root / "category_trends"
     verified_root = gold_root / "verified_purchase_impact"
 
-    _write_gold_table(
-        spark,
-        product_metrics_df,
-        product_root,
-        " AND ".join(
-            [
-                "target.parent_asin = source.parent_asin",
-                "target.category = source.category",
-                "target.review_date = source.review_date",
-            ]
-        ),
-    )
-    product_metrics_df.unpersist()
+    if is_small_input:
+        product_metrics_df = product_metrics_df.coalesce(small_coalesce)
+        category_trends_df = category_trends_df.coalesce(small_coalesce)
+        verified_impact_df = verified_impact_df.coalesce(small_coalesce)
 
-    _write_gold_table(
-        spark,
-        category_trends_df,
-        category_root,
-        "target.category = source.category AND target.review_date = source.review_date",
-    )
-    _write_gold_table(
-        spark,
-        verified_impact_df,
-        verified_root,
-        " AND ".join(
-            [
-                "target.category = source.category",
-                "target.review_date = source.review_date",
-                "target.verified_purchase <=> source.verified_purchase",
-            ]
-        ),
-    )
+    # Cache all three DFs before unpersisting source_df (avoids 2x Silver re-reads).
+    product_metrics_df = product_metrics_df.cache()
+    category_trends_df = category_trends_df.cache()
+    verified_impact_df = verified_impact_df.cache()
+    row_count = product_metrics_df.count()
+    category_trends_df.count()
+    verified_impact_df.count()
+    source_df.unpersist()
+
+    # Write all three tables in parallel (Spark may queue jobs; still avoids re-computation).
+    def _write_product_metrics() -> None:
+        _write_gold_table(
+            spark,
+            product_metrics_df,
+            product_root,
+            " AND ".join(
+                [
+                    "target.parent_asin = source.parent_asin",
+                    "target.category = source.category",
+                    "target.review_date = source.review_date",
+                ]
+            ),
+        )
+        product_metrics_df.unpersist()
+
+    def _write_category_trends() -> None:
+        _write_gold_table(
+            spark,
+            category_trends_df,
+            category_root,
+            "target.category = source.category AND target.review_date = source.review_date",
+        )
+        category_trends_df.unpersist()
+
+    def _write_verified_impact() -> None:
+        _write_gold_table(
+            spark,
+            verified_impact_df,
+            verified_root,
+            " AND ".join(
+                [
+                    "target.category = source.category",
+                    "target.review_date = source.review_date",
+                    "target.verified_purchase <=> source.verified_purchase",
+                ]
+            ),
+        )
+        verified_impact_df.unpersist()
+
+    with ThreadPoolExecutor(max_workers=3) as executor:
+        futures = [
+            executor.submit(_write_product_metrics),
+            executor.submit(_write_category_trends),
+            executor.submit(_write_verified_impact),
+        ]
+        for f in as_completed(futures):
+            f.result()
 
     optimize_threshold = get_gold_optimize_threshold()
     should_opt = (

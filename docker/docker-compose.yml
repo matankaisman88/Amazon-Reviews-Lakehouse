@@ -23,6 +23,7 @@ services:
       - ../data/spark-events:/opt/spark-events
       - ../src:/opt/spark-app/src
       - ../config:/opt/spark-app/config
+      - ../scripts:/opt/spark-app/scripts
     command: /opt/spark/bin/spark-class org.apache.spark.deploy.master.Master
     networks:
       - spark-net

@@ -82,6 +82,20 @@ def get_gold_optimize_threshold_size_mb() -> float:
     return float(gold.get("optimize_threshold_size_mb", 100))
 
 
+def get_gold_small_input_threshold_bytes() -> int:
+    """Below this Silver size (bytes), use fewer partitions for faster Gold processing."""
+    cfg = _load_config()
+    gold = cfg.get("gold", {})
+    return int(gold.get("small_input_threshold_bytes", 10 * 1024 * 1024))
+
+
+def get_gold_small_output_coalesce() -> int:
+    """Coalesce to N partitions before MERGE when output is small."""
+    cfg = _load_config()
+    gold = cfg.get("gold", {})
+    return int(gold.get("small_output_coalesce", 2))
+
+
 def get_dynamic_config() -> Dict[str, Any]:
     """Dynamic config: target_partition_size_bytes, min/max shuffle partitions."""
     cfg = _load_config()
