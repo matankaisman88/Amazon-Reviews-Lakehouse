@@ -21,11 +21,12 @@ from pyspark.sql.functions import (
     regexp_extract,
     sha2,
     to_date,
+    year,
 )
 
 from src.utils.amazon_schemas import AMAZON_REVIEW_SILVER_SCHEMA
 from src.utils.config_loader import get_max_partition_bytes, get_paths
-from src.utils.spark_session import get_spark_session
+from src.utils.spark_session import apply_dynamic_config, get_spark_session
 
 AMAZON_ROOT = "amazon_reviews"
 PRICE_REGEX = r"(\d+(?:\.\d+)?)"
@@ -90,7 +91,13 @@ def _build_silver_df(reviews_df: DataFrame, metadata_df: DataFrame) -> DataFrame
     )
 
     silver_cols = [field.name for field in AMAZON_REVIEW_SILVER_SCHEMA.fields]
-    return silver.select(*silver_cols).dropDuplicates(["review_id"])
+    result = silver.select(*silver_cols).dropDuplicates(["review_id"])
+    try:
+        from src.utils.debug_explain import log_explain
+        log_explain(result, label="silver_build", mode="formatted")
+    except Exception:
+        pass
+    return result
 
 
 def run(
@@ -104,11 +111,11 @@ def run(
     silver_path = str(silver_root)
 
     spark = spark or get_spark_session("AmazonSilverTransformation")
-    # Smaller scan partitions help avoid oversized tasks on constrained executors.
     spark.conf.set("spark.sql.files.maxPartitionBytes", get_max_partition_bytes())
 
     reviews_path = str(bronze_root / "reviews")
     metadata_path = str(bronze_root / "metadata")
+    apply_dynamic_config(spark, [reviews_path, metadata_path])
 
     reviews_df = spark.read.format("delta").load(reviews_path)
     metadata_df = spark.read.format("delta").load(metadata_path)
@@ -123,6 +130,9 @@ def run(
 
     if silver_df.isEmpty():
         return
+
+    # Partition by year (not review_date) to avoid 500+ partitions for small datasets.
+    silver_df = silver_df.withColumn("year", year(col("review_date")))
 
     # Check the exact target path only.
     # `/data/silver`, and DeltaTable.isDeltaTable() can treat that ancestor as a match.
@@ -139,7 +149,7 @@ def run(
         (
             silver_df.write.format("delta")
             .option("mergeSchema", "true")
-            .partitionBy("category", "review_date")
+            .partitionBy("category", "year")
             .mode("overwrite")
             .save(silver_path)
         )

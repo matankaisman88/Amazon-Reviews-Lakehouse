@@ -20,23 +20,38 @@ fetch:
   max_rows_per_category: 10000  # set to null for full download
 
 # Spark tuning - dashboard runs in local mode (driver = executor).
-# For full-category datasets (300MB+), driver_memory 2g+ is required.
+# Dynamic: shuffle_partitions computed from input size when dynamic_config.enabled=true.
 spark:
-  executor_memory: 2g  # Use 2g if RAM permits; 1g for 1-2GB total env
-  driver_memory: 2g  # 2g for large categories (Video_Games ~347MB); 512m for small batches only
-  max_partition_bytes: 64m  # Smaller = less memory per task; helps avoid OOM on large datasets
-  memory_fraction: 0.5  # Lower = more JVM headroom, less GC pressure on constrained env
-  memory_storage_fraction: 0.3  # Less cache, more execution memory for small batches
-  shuffle_partitions: 8  # 200 creates massive overhead for 3MB; use 8 for small batches
+  executor_memory: 2g
+  driver_memory: 2g
+  max_partition_bytes: 64m
+  memory_fraction: 0.5
+  memory_storage_fraction: 0.3
+  shuffle_partitions: 8  # Fallback when dynamic disabled
   adaptive_enabled: true
   serializer: org.apache.spark.serializer.KryoSerializer
   event_log_enabled: true
   event_log_dir: /opt/spark-events
+  # AQE: coalesce and advisory partition size for scalable shuffle
+  advisory_partition_size: 134217728  # 128MB target per partition after coalesce
+  coalesce_partitions_enabled: true
+
+# Dynamic config: estimate input size and set shuffle_partitions automatically
+dynamic_config:
+  enabled: true
+  target_partition_size_bytes: 134217728  # 128MB per partition
+  min_shuffle_partitions: 8
+  max_shuffle_partitions: 400
 
 # Gold layer settings
 gold:
-  rolling_days: 30  # Rolling window for product_metrics
-  optimize_threshold_rows: 100000  # Skip OPTIMIZE/Z-ORDER below this; cost outweighs benefit for small batches
+  rolling_days: 30
+  optimize_threshold_rows: 100000  # Min rows to run OPTIMIZE
+  optimize_threshold_size_mb: 100  # Min table size (MB) to run OPTIMIZE; also checks fragmentation
+
+# Debug: set explain_enabled=true and SPARK_DEBUG=1 to log df.explain() to data/debug/
+debug:
+  explain_enabled: false
 
 # Great Expectations (optional; Amazon suites can be added)
 gx:

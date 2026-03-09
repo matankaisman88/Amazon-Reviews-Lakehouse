@@ -16,7 +16,7 @@ Fetch (McAuley Lab UCSD) → Raw JSONL.gz
 | Layer | Purpose | Partitioning |
 |-------|---------|--------------|
 | Bronze | Raw ingestion, schema enforcement, category extraction from path | `category`, `ingestion_date` |
-| Silver | Deduplication, metadata enrichment, price parsing, MERGE | `category`, `review_date` |
+| Silver | Deduplication, metadata enrichment, price parsing, MERGE | `category`, `year` |
 | Gold | Business analytics, rolling metrics, trust analysis | `category`, `review_date` |
 
 **Quality checks** — Silver data is validated (non-null identifiers, valid ratings, non-negative helpful votes) before Gold aggregation; no separate pipeline step.
@@ -212,20 +212,26 @@ For declining products (rating drop > 0.5 vs previous week), use **Generate AI R
 
 ## Configuration
 
-- **config/config.yaml** — Paths, Spark settings, GX checkpoint
+- **config/config.yaml** — Paths, Spark settings, dynamic config, AQE, GX checkpoint
 - **.env** — Overrides (copy from `.env.example`)
 - **.streamlit/config.toml** — Dashboard theme (dark sidebar, light main, dark code blocks)
+- **Debug**: Set `SPARK_DEBUG=1` or `debug.explain_enabled: true` in config to log `df.explain()` plans to `data/debug/`
 
 ### Spark Tuning (AQE & Memory)
 
 - `spark.sql.adaptive.enabled=true` — AQE coalesces shuffle partitions at runtime.
 - `spark.sql.shuffle.partitions=8` — Tuned for small batches (3MB–100K rows); increase to 200 for large datasets.
 - `spark.memory.fraction=0.5` — Leaves headroom for JVM on constrained env (1–2GB RAM).
-- `spark.max_partition_bytes` — Max bytes per partition for file scans (default `64m`). Smaller values reduce memory per task for large datasets.
-- `gold.optimize_threshold_rows=100000` — OPTIMIZE/Z-ORDER runs only above this; skip for small batches to avoid rewrite overhead.
+- `spark.max_partition_bytes` — Max bytes per partition for file scans (default `64m`).
+- `dynamic_config.enabled` — When true, shuffle partitions are computed from input size (~128MB per partition; min 8, max 400).
+- `spark.advisory_partition_size` — AQE target partition size (128MB) after coalesce.
+- `spark.coalesce_partitions_enabled` — AQE coalesce for scalable shuffle.
+- `gold.optimize_threshold_rows` — Min rows in batch to run OPTIMIZE (default 100000).
+- `gold.optimize_threshold_size_mb` — Min table size (MB) to run OPTIMIZE; skips tiny tables to save DBUs (default 100).
 - Default executor memory is `1g`; increase `spark.executor.memory` (e.g. `2g`) when RAM permits.
-- **Full-category datasets** (e.g. Video_Games ~347MB): config uses `driver_memory: 2g` and `max_partition_bytes: 64m`; dashboard has `mem_limit: 4g`. Reduce `max_rows_per_category` if OOM persists.
+- **Full-category datasets** (e.g. Video_Games ~347MB): config uses `driver_memory: 2g` and `max_partition_bytes: 64m`; dashboard has `mem_limit: 4g`. Shuffle partitions scale automatically with input size when `dynamic_config.enabled=true`.
 - Run Silver/Gold incrementally by passing an `ingestion_date` or `--category=` to scope work.
+- **Silver partition change** (v2): Silver now partitions by `category`, `year` (not `review_date`) to reduce task count. If you have existing Silver data with the old schema, delete `data/silver/amazon_reviews` and re-run the pipeline to recreate with the new partitioning.
 
 ## Project Structure
 
@@ -265,9 +271,11 @@ For declining products (rating drop > 0.5 vs previous week), use **Generate AI R
 │   └── utils/
 │       ├── ai_query_helper.py       # NL-to-SQL via LLM against Gold tables
 │       ├── amazon_schemas.py        # StructTypes for Bronze, Silver, Gold
-│       ├── config_loader.py         # Loads config.yaml and .env
+│       ├── config_loader.py         # Loads config.yaml; dynamic shuffle partitions
+│       ├── debug_explain.py         # Log df.explain() to data/debug/ when SPARK_DEBUG=1
+│       ├── input_size_estimator.py  # Estimate input size for dynamic config
 │       ├── pipeline_orchestrator.py  # Bronze → Silver → Gold for dashboard refresh
-│       └── spark_session.py         # SparkSession builder with Delta extensions
+│       └── spark_session.py         # SparkSession builder; AQE; dynamic config
 │
 ├── scripts/
 │   ├── fetch_amazon_data.py # Download raw JSONL.gz from McAuley Lab (streaming; no OOM on large files)

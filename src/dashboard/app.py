@@ -178,6 +178,7 @@ def _run_refresh_flow(
     category: str,
     max_rows: Optional[int] = None,
     overwrite_raw: bool = False,
+    skip_optimize: bool = False,
 ) -> None:
     """Execute the Amazon pipeline for category in a subprocess."""
     import subprocess
@@ -204,6 +205,8 @@ def _run_refresh_flow(
         cmd.append("--max-rows=0")
     if overwrite_raw:
         cmd.append("--overwrite-raw")
+    if skip_optimize:
+        cmd.append("--skip-optimize")
 
     try:
         with st.spinner(f"Running pipeline for {category}..."):
@@ -295,9 +298,20 @@ def _render_refresh_button() -> None:
             key="fetch_overwrite",
             help="Re-download even if raw files exist. Use with Unlimited to replace a limited fetch.",
         )
+        skip_optimize = st.checkbox(
+            "Skip Gold OPTIMIZE (faster runs)",
+            value=False,
+            key="skip_optimize",
+            help="Skip Gold OPTIMIZE/Z-ORDER. Use for faster backfills; small tables are often skipped by config anyway.",
+        )
 
     if st.sidebar.button("Run Pipeline", type="primary", key="run_pipeline", use_container_width=True):
-        _run_refresh_flow(pipeline_category, max_rows=fetch_max_rows, overwrite_raw=overwrite_raw)
+        _run_refresh_flow(
+            pipeline_category,
+            max_rows=fetch_max_rows,
+            overwrite_raw=overwrite_raw,
+            skip_optimize=skip_optimize,
+        )
 
     st.sidebar.divider()
 

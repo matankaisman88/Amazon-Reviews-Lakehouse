@@ -40,6 +40,7 @@ def run_refresh(
     category: Optional[str] = None,
     max_rows: Optional[int] = None,
     overwrite_raw: bool = False,
+    skip_optimize: bool = False,
 ) -> Iterator[str]:
     """
     Full pipeline: Bronze -> Silver -> Gold for the Amazon Reviews pipeline.
@@ -64,6 +65,8 @@ def run_refresh(
     raw_count = _count_raw_files(raw_root)
     yield f"[Orchestrator] Amazon raw root: {raw_root}"
     yield f"[Orchestrator] Staged raw files: {raw_count}"
+    if skip_optimize:
+        yield "[Orchestrator] Gold OPTIMIZE: skipped (--skip-optimize)"
 
     # Fetch category if raw files missing, or force re-fetch when overwrite_raw
     review_file = raw_root / "reviews" / f"{cat}.jsonl.gz"
@@ -149,7 +152,7 @@ def run_refresh(
     try:
         from src.jobs.amazon_gold_analytics import run as gold_run
 
-        gold_run(spark=spark, category=cat, ingestion_date=ingest_date)
+        gold_run(spark=spark, category=cat, ingestion_date=ingest_date, skip_optimize=skip_optimize)
         yield "[3/3] Gold complete."
     except Exception as exc:
         raise RuntimeError(f"Gold stage failed: {exc}") from exc

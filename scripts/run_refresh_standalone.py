@@ -2,10 +2,11 @@
 Standalone script to run the pipeline and print progress to stdout.
 Used by the dashboard so the pipeline runs in a subprocess and doesn't block Streamlit.
 
-Usage: python scripts/run_refresh_standalone.py [--category=Category] [--max-rows=N] [--overwrite-raw]
+Usage: python scripts/run_refresh_standalone.py [--category=Category] [--max-rows=N] [--overwrite-raw] [--skip-optimize]
   --category=Gift_Cards  (default: Gift_Cards)
   --max-rows=N           limit rows per category when fetching (omit for config default; 0 = unlimited)
   --overwrite-raw        re-fetch and overwrite existing raw files
+  --skip-optimize        skip Gold OPTIMIZE/Z-ORDER (faster runs)
 """
 import os
 import sys
@@ -19,6 +20,7 @@ if __name__ == "__main__":
     category = None
     max_rows = None
     overwrite_raw = False
+    skip_optimize = False
     for arg in sys.argv[1:]:
         if arg.startswith("--category="):
             category = arg.split("=", 1)[1]
@@ -31,7 +33,9 @@ if __name__ == "__main__":
                 max_rows = 0 if val == "0" else int(val)
         elif arg == "--overwrite-raw":
             overwrite_raw = True
+        elif arg == "--skip-optimize":
+            skip_optimize = True
     from src.utils.pipeline_orchestrator import run_refresh
 
-    for line in run_refresh(category=category, max_rows=max_rows, overwrite_raw=overwrite_raw):
+    for line in run_refresh(category=category, max_rows=max_rows, overwrite_raw=overwrite_raw, skip_optimize=skip_optimize):
         print(line, flush=True)

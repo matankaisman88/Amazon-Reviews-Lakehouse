@@ -75,6 +75,41 @@ def get_gold_optimize_threshold() -> int:
     return int(gold.get("optimize_threshold_rows", 100000))
 
 
+def get_gold_optimize_threshold_size_mb() -> float:
+    """Min table size (MB) to run OPTIMIZE; skip for small tables."""
+    cfg = _load_config()
+    gold = cfg.get("gold", {})
+    return float(gold.get("optimize_threshold_size_mb", 100))
+
+
+def get_dynamic_config() -> Dict[str, Any]:
+    """Dynamic config: target_partition_size_bytes, min/max shuffle partitions."""
+    cfg = _load_config()
+    dyn = cfg.get("dynamic_config", {})
+    return {
+        "enabled": dyn.get("enabled", True),
+        "target_partition_size_bytes": int(dyn.get("target_partition_size_bytes", 134217728)),
+        "min_shuffle_partitions": int(dyn.get("min_shuffle_partitions", 8)),
+        "max_shuffle_partitions": int(dyn.get("max_shuffle_partitions", 400)),
+    }
+
+
+def get_shuffle_partitions_for_input(input_size_bytes: int) -> int:
+    """Compute shuffle partitions from input size when dynamic_config.enabled; else use static config."""
+    cfg = _load_config()
+    dyn = get_dynamic_config()
+    if not dyn.get("enabled", True):
+        return int(cfg.get("spark", {}).get("shuffle_partitions", 8))
+    from src.utils.input_size_estimator import compute_shuffle_partitions
+
+    return compute_shuffle_partitions(
+        input_size_bytes,
+        target_partition_size_bytes=dyn["target_partition_size_bytes"],
+        min_partitions=dyn["min_shuffle_partitions"],
+        max_partitions=dyn["max_shuffle_partitions"],
+    )
+
+
 def get_fetch_config() -> Dict[str, Any]:
     """Fetch settings: default_categories, max_rows_per_category (None = no limit)."""
     cfg = _load_config()

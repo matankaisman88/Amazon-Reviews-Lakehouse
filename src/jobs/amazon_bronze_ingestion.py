@@ -16,7 +16,7 @@ from pyspark.sql.types import StructType
 
 from src.utils.amazon_schemas import AMAZON_METADATA_SCHEMA, AMAZON_REVIEW_SCHEMA
 from src.utils.config_loader import get_max_partition_bytes, get_paths
-from src.utils.spark_session import get_spark_session
+from src.utils.spark_session import apply_dynamic_config, get_spark_session
 
 AMAZON_BRONZE_ROOT = "amazon_reviews"
 
@@ -64,12 +64,13 @@ def run(
     spark = spark or get_spark_session("AmazonBronzeIngestion")
     spark.conf.set("spark.sql.files.maxPartitionBytes", get_max_partition_bytes())
 
-    ingest_date = ingestion_date or None  # None => current_date in _with_partition_columns
+    ingest_date = ingestion_date or None
 
     if category:
         # Scope to one category: read specific files, partition overwrite
         review_path = str(raw_root / "reviews" / f"{category}.jsonl.gz")
         metadata_path = str(raw_root / "metadata" / f"meta_{category}.jsonl.gz")
+        apply_dynamic_config(spark, [review_path, metadata_path])
         if not Path(review_path).exists() or not Path(metadata_path).exists():
             raise FileNotFoundError(
                 f"Raw files for {category} not found. Run fetch first: "
@@ -87,6 +88,7 @@ def run(
         # Full ingest: all raw files, append (legacy behavior for run_pipeline.sh)
         review_path = str(raw_root / "reviews")
         metadata_path = str(raw_root / "metadata")
+        apply_dynamic_config(spark, [review_path, metadata_path])
         reviews = (
             spark.read.schema(AMAZON_REVIEW_SCHEMA)
             .option("recursiveFileLookup", "true")

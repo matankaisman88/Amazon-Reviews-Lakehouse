@@ -20,8 +20,15 @@ from src.utils.amazon_schemas import (
     AMAZON_PRODUCT_METRICS_GOLD_SCHEMA,
     AMAZON_VERIFIED_PURCHASE_IMPACT_GOLD_SCHEMA,
 )
-from src.utils.config_loader import get_max_partition_bytes, get_paths, get_gold_optimize_threshold
-from src.utils.spark_session import get_spark_session
+from src.utils.config_loader import (
+    get_max_partition_bytes,
+    get_paths,
+    get_gold_optimize_threshold,
+    get_gold_optimize_threshold_size_mb,
+    get_shuffle_partitions_for_input,
+)
+from src.utils.input_size_estimator import estimate_input_size_bytes
+from src.utils.spark_session import apply_dynamic_config, get_spark_session
 
 AMAZON_ROOT = "amazon_reviews"
 ROLLING_DAYS = 30
@@ -195,6 +202,14 @@ def _write_gold_table(
         )
 
 
+def _should_optimize_table(target_root: Path) -> bool:
+    """Check if table meets size threshold for OPTIMIZE (avoids DBU waste on tiny tables)."""
+    size_bytes = estimate_input_size_bytes(target_root)
+    size_mb = size_bytes / (1024 * 1024)
+    threshold_mb = get_gold_optimize_threshold_size_mb()
+    return size_mb >= threshold_mb
+
+
 def _optimize_table(
     spark: SparkSession,
     target_root: Path,
@@ -203,10 +218,12 @@ def _optimize_table(
     categories: List[str],
     zorder_cols: Optional[List[str]] = None,
 ) -> None:
-    """OPTIMIZE only the touched partitions and Z-ORDER. Uses date range + categories (no collect)."""
+    """OPTIMIZE only the touched partitions and Z-ORDER when table meets size threshold."""
     if not (target_root / "_delta_log").exists():
         return
     if not categories:
+        return
+    if not _should_optimize_table(target_root):
         return
 
     from datetime import timedelta
@@ -238,8 +255,10 @@ def run(
     gold_root = Path(paths["gold"]) / AMAZON_ROOT
 
     spark = spark or get_spark_session("AmazonGoldAnalytics")
-    # Smaller scan partitions help avoid oversized tasks on constrained executors.
     spark.conf.set("spark.sql.files.maxPartitionBytes", get_max_partition_bytes())
+
+    silver_path = str(silver_root)
+    apply_dynamic_config(spark, silver_path)
     # Enable schema evolution for merge (adds new columns like avg_price, count_*_star).
     spark.conf.set("spark.databricks.delta.schema.autoMerge.enabled", "true")
 
@@ -256,6 +275,12 @@ def run(
     if category:
         source_df = source_df.filter(F.col("category") == category)
 
+    # Coalesce to reduce task count: Silver partitioned by (category,year) ~24 partitions; legacy (category,review_date) had 500+.
+    # Auto-tune from Silver table size (same logic as shuffle_partitions).
+    silver_size_bytes = estimate_input_size_bytes(silver_path)
+    max_partitions = get_shuffle_partitions_for_input(silver_size_bytes)
+    source_df = source_df.coalesce(max_partitions)
+
     # Cache source_df: used for 3 Gold tables; avoid re-scanning Silver 3x.
     source_df = source_df.cache()
     if category:
@@ -266,6 +291,12 @@ def run(
     product_metrics_df = _build_product_metrics_df(source_df, output_start, output_end)
     category_trends_df = _build_category_trends_df(source_df, output_start, output_end)
     verified_impact_df = _build_verified_purchase_impact_df(source_df, output_start, output_end)
+
+    try:
+        from src.utils.debug_explain import log_explain
+        log_explain(product_metrics_df, label="gold_product_metrics", mode="formatted")
+    except Exception:
+        pass
 
     if product_metrics_df.isEmpty():
         source_df.unpersist()
@@ -314,13 +345,18 @@ def run(
     )
 
     optimize_threshold = get_gold_optimize_threshold()
-    if not skip_optimize and row_count >= optimize_threshold:
+    should_opt = (
+        not skip_optimize
+        and (row_count >= optimize_threshold or _should_optimize_table(product_root))
+    )
+    if should_opt:
         _optimize_table(
             spark, product_root, output_start, output_end, categories, zorder_cols=["parent_asin"]
         )
         _optimize_table(spark, category_root, output_start, output_end, categories)
         _optimize_table(
-            spark, verified_root, output_start, output_end, categories, zorder_cols=["verified_purchase"]
+            spark, verified_root, output_start, output_end, categories,
+            zorder_cols=["verified_purchase"],
         )
 
 
