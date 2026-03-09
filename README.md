@@ -228,13 +228,18 @@ For declining products (rating drop > 0.5 vs previous week), use **Generate AI R
 - `spark.memory.fraction=0.5` — Leaves headroom for JVM on constrained env (1–2GB RAM).
 - `spark.max_partition_bytes` — Max bytes per partition for file scans (default `64m`).
 - `dynamic_config.enabled` — When true, shuffle partitions are computed from input size (~128MB per partition; min 8, max 400).
+- `dynamic_config.small_input_threshold_bytes` — Below 10MB input, use 1–2 partitions (Gift_Cards etc.).
+- `dynamic_config.small_input_partitions` — Partitions when input < threshold (default 2).
 - `spark.advisory_partition_size` — AQE target partition size (128MB) after coalesce.
 - `spark.coalesce_partitions_enabled` — AQE coalesce for scalable shuffle.
 - `gold.optimize_threshold_rows` — Min rows in batch to run OPTIMIZE (default 100000).
 - `gold.optimize_threshold_size_mb` — Min table size (MB) to run OPTIMIZE; skips tiny tables to save DBUs (default 100).
 - `gold.small_input_threshold_bytes` — Below 10MB Silver size, use fewer partitions (default 10MB) for faster Gold.
 - `gold.small_output_coalesce` — Coalesce to N partitions before MERGE for small output (default 2).
+- `gold.small_output_threshold_rows` — Coalesce when output rows < this (default 10000), even if input was large.
 - **Gold parallel writes** — product_metrics, category_trends, and verified_purchase_impact are cached and written in parallel; Silver is read once (avoids 2× re-reads).
+- **Gold filter pushdown** — category_trends and verified_impact filter by date before groupBy (no post-aggregate filter).
+- **Dynamic by input size** — Bronze, Silver, Gold all adapt: small input (<10MB) → 2 partitions; large → 8–400. Silver coalesces before MERGE when Bronze is small.
 - Default executor memory is `1g`; increase `spark.executor.memory` (e.g. `2g`) when RAM permits.
 - **Full-category datasets** (e.g. Video_Games ~347MB): config uses `driver_memory: 2g` and `max_partition_bytes: 64m`; dashboard has `mem_limit: 4g`. Shuffle partitions scale automatically with input size when `dynamic_config.enabled=true`.
 - Run Silver/Gold incrementally by passing an `ingestion_date` or `--category=` to scope work.

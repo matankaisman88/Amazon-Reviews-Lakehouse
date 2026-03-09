@@ -25,7 +25,8 @@ from pyspark.sql.functions import (
 )
 
 from src.utils.amazon_schemas import AMAZON_REVIEW_SILVER_SCHEMA
-from src.utils.config_loader import get_max_partition_bytes, get_paths
+from src.utils.config_loader import get_dynamic_config, get_max_partition_bytes, get_paths
+from src.utils.input_size_estimator import estimate_input_size_bytes
 from src.utils.spark_session import apply_dynamic_config, get_spark_session
 
 AMAZON_ROOT = "amazon_reviews"
@@ -135,6 +136,12 @@ def run(
 
     # Partition by year (not review_date) to avoid 500+ partitions for small datasets.
     silver_df = silver_df.withColumn("year", year(col("review_date")))
+
+    # Coalesce before MERGE when Bronze is small (avoids 8-partition shuffle for Gift_Cards etc.).
+    bronze_size_bytes = estimate_input_size_bytes([reviews_path, metadata_path])
+    dyn = get_dynamic_config()
+    if bronze_size_bytes < dyn.get("small_input_threshold_bytes", 10485760):
+        silver_df = silver_df.coalesce(dyn.get("small_input_partitions", 2))
 
     # Check the exact target path only.
     # `/data/silver`, and DeltaTable.isDeltaTable() can treat that ancestor as a match.

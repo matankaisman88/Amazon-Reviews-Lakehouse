@@ -45,12 +45,17 @@ def compute_shuffle_partitions(
     target_partition_size_bytes: int = 134_217_728,  # 128MB
     min_partitions: int = 8,
     max_partitions: int = 400,
+    small_input_threshold_bytes: int = 10_485_760,  # 10MB
+    small_input_partitions: int = 2,
 ) -> int:
     """
     Compute shuffle partitions from input size.
-    Rule: ~128–200MB per partition. Min 8, max 200–400.
+    Below small_input_threshold_bytes: use small_input_partitions (1-2).
+    Above: ~128MB per partition, min 8, max 400.
     """
     if input_size_bytes <= 0:
-        return min_partitions
+        return small_input_partitions
+    if input_size_bytes < small_input_threshold_bytes:
+        return small_input_partitions
     partitions = max(1, input_size_bytes // target_partition_size_bytes)
     return max(min_partitions, min(partitions, max_partitions))

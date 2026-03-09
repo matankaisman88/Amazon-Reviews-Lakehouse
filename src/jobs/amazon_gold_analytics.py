@@ -28,6 +28,7 @@ from src.utils.config_loader import (
     get_gold_optimize_threshold_size_mb,
     get_gold_small_input_threshold_bytes,
     get_gold_small_output_coalesce,
+    get_gold_small_output_threshold_rows,
     get_shuffle_partitions_for_input,
 )
 from src.utils.input_size_estimator import estimate_input_size_bytes
@@ -144,10 +145,14 @@ def _build_product_metrics_df(silver_df: DataFrame, output_start, output_end) ->
 
 
 def _build_category_trends_df(silver_df: DataFrame, output_start, output_end) -> DataFrame:
-    """Build daily category-level trend metrics with rating distribution."""
+    """Build daily category-level trend metrics with rating distribution.
+    Filter to output range before groupBy (no lookback needed; avoids post-aggregate filter)."""
     rounded_rating = F.round(F.col("rating")).cast("long")
-    category_trends = (
-        silver_df.groupBy("category", "review_date")
+    filtered = silver_df.filter(
+        (F.col("review_date") >= F.lit(output_start)) & (F.col("review_date") <= F.lit(output_end))
+    )
+    return (
+        filtered.groupBy("category", "review_date")
         .agg(
             F.count("*").alias("daily_review_count"),
             F.avg("rating").alias("daily_avg_rating"),
@@ -159,7 +164,6 @@ def _build_category_trends_df(silver_df: DataFrame, output_start, output_end) ->
         )
         .select(*[field.name for field in AMAZON_CATEGORY_TRENDS_GOLD_SCHEMA.fields])
     )
-    return _restrict_output_range(category_trends, output_start, output_end)
 
 
 def _build_verified_purchase_impact_df(
@@ -167,16 +171,19 @@ def _build_verified_purchase_impact_df(
     output_start,
     output_end,
 ) -> DataFrame:
-    """Build daily verified-purchase impact metrics."""
-    verified_impact = (
-        silver_df.groupBy("category", "review_date", "verified_purchase")
+    """Build daily verified-purchase impact metrics.
+    Filter to output range before groupBy (no lookback needed; avoids post-aggregate filter)."""
+    filtered = silver_df.filter(
+        (F.col("review_date") >= F.lit(output_start)) & (F.col("review_date") <= F.lit(output_end))
+    )
+    return (
+        filtered.groupBy("category", "review_date", "verified_purchase")
         .agg(
             F.count("*").alias("daily_review_count"),
             F.avg("rating").alias("avg_rating"),
         )
         .select(*[field.name for field in AMAZON_VERIFIED_PURCHASE_IMPACT_GOLD_SCHEMA.fields])
     )
-    return _restrict_output_range(verified_impact, output_start, output_end)
 
 
 def _write_gold_table(
@@ -311,11 +318,6 @@ def run(
     category_root = gold_root / "category_trends"
     verified_root = gold_root / "verified_purchase_impact"
 
-    if is_small_input:
-        product_metrics_df = product_metrics_df.coalesce(small_coalesce)
-        category_trends_df = category_trends_df.coalesce(small_coalesce)
-        verified_impact_df = verified_impact_df.coalesce(small_coalesce)
-
     # Cache all three DFs before unpersisting source_df (avoids 2x Silver re-reads).
     product_metrics_df = product_metrics_df.cache()
     category_trends_df = category_trends_df.cache()
@@ -324,6 +326,14 @@ def run(
     category_trends_df.count()
     verified_impact_df.count()
     source_df.unpersist()
+
+    # Coalesce when input or output is small (avoids 8-partition shuffle for ~5K rows).
+    small_output_threshold = get_gold_small_output_threshold_rows()
+    should_coalesce = is_small_input or row_count < small_output_threshold
+    if should_coalesce:
+        product_metrics_df = product_metrics_df.coalesce(small_coalesce)
+        category_trends_df = category_trends_df.coalesce(small_coalesce)
+        verified_impact_df = verified_impact_df.coalesce(small_coalesce)
 
     # Write all three tables in parallel (Spark may queue jobs; still avoids re-computation).
     def _write_product_metrics() -> None:

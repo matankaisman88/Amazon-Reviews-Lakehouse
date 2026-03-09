@@ -43,6 +43,8 @@ dynamic_config:
   target_partition_size_bytes: 134217728  # 128MB per partition
   min_shuffle_partitions: 8
   max_shuffle_partitions: 400
+  small_input_threshold_bytes: 10485760  # 10MB: use fewer partitions below this (Gift_Cards etc.)
+  small_input_partitions: 2  # Partitions when input < small_input_threshold_bytes
 
 # Gold layer settings
 gold:
@@ -51,6 +53,7 @@ gold:
   optimize_threshold_size_mb: 100  # Min table size (MB) to run OPTIMIZE; also checks fragmentation
   small_input_threshold_bytes: 10485760  # 10MB: use 1-2 partitions below this (faster for Gift_Cards etc.)
   small_output_coalesce: 2  # Coalesce to N partitions before MERGE for small output
+  small_output_threshold_rows: 10000  # Coalesce when output rows < this (even if input was large)
 
 # Debug: set explain_enabled=true and SPARK_DEBUG=1 to log df.explain() to data/debug/
 debug:

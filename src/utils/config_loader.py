@@ -96,8 +96,15 @@ def get_gold_small_output_coalesce() -> int:
     return int(gold.get("small_output_coalesce", 2))
 
 
+def get_gold_small_output_threshold_rows() -> int:
+    """Below this output row count, coalesce before MERGE (even when input was large)."""
+    cfg = _load_config()
+    gold = cfg.get("gold", {})
+    return int(gold.get("small_output_threshold_rows", 10000))
+
+
 def get_dynamic_config() -> Dict[str, Any]:
-    """Dynamic config: target_partition_size_bytes, min/max shuffle partitions."""
+    """Dynamic config: target_partition_size_bytes, min/max shuffle partitions, small-input thresholds."""
     cfg = _load_config()
     dyn = cfg.get("dynamic_config", {})
     return {
@@ -105,6 +112,8 @@ def get_dynamic_config() -> Dict[str, Any]:
         "target_partition_size_bytes": int(dyn.get("target_partition_size_bytes", 134217728)),
         "min_shuffle_partitions": int(dyn.get("min_shuffle_partitions", 8)),
         "max_shuffle_partitions": int(dyn.get("max_shuffle_partitions", 400)),
+        "small_input_threshold_bytes": int(dyn.get("small_input_threshold_bytes", 10485760)),
+        "small_input_partitions": int(dyn.get("small_input_partitions", 2)),
     }
 
 
@@ -121,6 +130,8 @@ def get_shuffle_partitions_for_input(input_size_bytes: int) -> int:
         target_partition_size_bytes=dyn["target_partition_size_bytes"],
         min_partitions=dyn["min_shuffle_partitions"],
         max_partitions=dyn["max_shuffle_partitions"],
+        small_input_threshold_bytes=dyn["small_input_threshold_bytes"],
+        small_input_partitions=dyn["small_input_partitions"],
     )
 
 
