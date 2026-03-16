@@ -67,7 +67,7 @@ def _raw_root() -> Path:
     """Resolve raw data root: DATA_ROOT env or project data/raw."""
     data_root = os.getenv("DATA_ROOT")
     if data_root:
-        return Path(data_root) / "amazon"
+        return Path(data_root) / "raw" / "amazon"
     return _project_root() / "data" / "raw" / "amazon"
 
 

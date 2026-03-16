@@ -17,3 +17,4 @@ data/spark-events/
 !data/metadata/
 !data/.gitkeep
 .great_expectations/
+airflow/.env

@@ -1,0 +1,70 @@
+x-airflow-common:
+  &airflow-common
+  build:
+    context: ..
+    dockerfile: airflow/Dockerfile
+  environment:
+    - DATA_ROOT=/opt/airflow/project/data
+    - AIRFLOW__CORE__EXECUTOR=LocalExecutor
+    - AIRFLOW__DATABASE__SQL_ALCHEMY_CONN=postgresql+psycopg2://airflow:airflow@postgres/airflow
+    - AIRFLOW__CORE__FERNET_KEY=RZgU0Ouz3Ja7VYfQF4fY5iVY3qg7P-6S3O7Z1xq9c0E=
+    - AIRFLOW__CORE__DAGS_ARE_PAUSED_AT_CREATION=true
+    - AIRFLOW__CORE__LOAD_EXAMPLES=false
+    - AIRFLOW__LOGGING__BASE_LOG_FOLDER=/opt/airflow/logs
+  volumes:
+    - ..:/opt/airflow/project
+    - ./dags:/opt/airflow/dags
+    - ./webserver_config.py:/opt/airflow/webserver_config.py
+    - ./logs:/opt/airflow/logs
+  user: "50000:0"
+
+services:
+  postgres:
+    image: postgres:15
+    environment:
+      POSTGRES_USER: airflow
+      POSTGRES_PASSWORD: airflow
+      POSTGRES_DB: airflow
+    volumes:
+      - postgres-db-volume:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD", "pg_isready", "-U", "airflow"]
+      interval: 5s
+      retries: 5
+
+  airflow-webserver:
+    <<: *airflow-common
+    command: webserver
+    ports:
+      - "8080:8080"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      airflow-init:
+        condition: service_completed_successfully
+
+  airflow-scheduler:
+    <<: *airflow-common
+    command: scheduler
+    ports:
+      - "8501:8501"
+      - "8502:8502"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      airflow-init:
+        condition: service_completed_successfully
+
+  airflow-init:
+    <<: *airflow-common
+    command: >
+      bash -c "
+      airflow db init &&
+      airflow users create --username admin --password admin --firstname Admin --lastname User --role Admin --email admin@example.com || true
+      "
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+volumes:
+  postgres-db-volume:
