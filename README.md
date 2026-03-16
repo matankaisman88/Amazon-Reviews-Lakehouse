@@ -64,13 +64,13 @@ Fetch (McAuley Lab UCSD) → Raw JSONL.gz
 
 ## Run Modes
 
-Two ways to process data:
+Three ways to process data:
 
 | Mode | Use case | How |
 |------|----------|-----|
 | **1. Manual Pipeline** | Scripts, CI/CD, by category | Run `run_pipeline.sh` (auto-fetches raw data if needed) |
 | **2. Dashboard (Docker)** | Interactive UI, by category | Start dashboard → Select category → **Run Pipeline** (auto-fetches if needed) |
-| **3. Airflow DAG** | Scheduled pipeline + optional dashboard starter | Use the `amazon_reviews` DAG in `airflow` (Fetch → Bronze → Silver → Gold → start dashboard) |
+| **3. Airflow DAG** | Scheduled pipeline | Use the `amazon_reviews` DAG in `airflow` (Fetch → Bronze → Silver → Gold → quality checks) |
 
 ---
 
@@ -226,7 +226,7 @@ docker compose up -d
 
 This starts Postgres, the Airflow webserver, scheduler, and an Airflow worker container that mounts the project at `/opt/airflow/project`.
 
-- **Airflow UI**: `http://localhost:8080` (username: `admin`, password: `admin`)
+- **Airflow UI**: `http://localhost:8080`
 - **Logs**: `airflow/logs/`
 
 ### `amazon_reviews` DAG
@@ -236,8 +236,7 @@ The DAG defined in `airflow/dags/amazon_reviews_dag.py` orchestrates:
 1. **`ensure_dirs`** — Creates `data/bronze`, `data/silver`, `data/gold`, and `data/raw` under the mounted project root.
 2. **`fetch_data`** — Runs `scripts/fetch_amazon_data.py` for the selected category, mirroring the dashboard's auto-fetch logic.
 3. **`run_pipeline`** — Runs `scripts/run_pipeline_unified.py` for the selected category and Airflow execution date (Bronze → Silver → Gold in a single Spark session).
-4. **`quality_checks`** — Executes `src/quality/quality_checks.py` (rule-based validation before Gold write).
-5. **`run_dashboard`** — Starts the Streamlit dashboard inside the Airflow worker on port `8502` so results can be inspected.
+4. **`quality_checks`** — Loads the Silver Delta table via Spark, runs `validate_silver` (non-null identifiers, valid ratings, non-negative helpful votes), then stops Spark.
 
 #### DAG parameters (Trigger DAG / Run view)
 
@@ -247,14 +246,6 @@ The DAG exposes the same knobs as the dashboard sidebar:
 - **`skip_optimize`** (bool, default `false`) — Skip Delta `OPTIMIZE`/Z-ORDER in Gold for faster iteration.
 - **`overwrite`** (bool, default `false`) — Force re-fetch of raw data for the selected category (overwrites existing JSONL.gz).
 - **`max_rows`** (int/null, default `null`) — Max rows per category when fetching; `null` uses `fetch.max_rows_per_category` from `config/config.yaml`.
-
-#### Accessing the dashboard from Airflow
-
-When `run_dashboard` runs successfully:
-
-- The dashboard is started in the background via `streamlit run src/dashboard/app.py` bound to `0.0.0.0:8502`.
-- Port `8502` is exposed from the Airflow scheduler/worker container in `airflow/docker-compose.yml`.
-- You can open `http://localhost:8502` in your browser to inspect the latest Gold tables after a DAG run.
 
 ---
 

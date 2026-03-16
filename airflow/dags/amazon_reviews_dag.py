@@ -1,13 +1,8 @@
-import os
-from datetime import timedelta
-
-import subprocess
+from datetime import datetime, timedelta
 
 from airflow import DAG
 from airflow.models.param import Param
 from airflow.operators.bash import BashOperator
-from airflow.operators.python import PythonOperator
-from airflow.utils.dates import days_ago
 
 PROJECT_ROOT = "/opt/airflow/project"
 
@@ -22,7 +17,7 @@ with DAG(
     default_args=default_args,
     schedule="@daily",
     catchup=False,
-    start_date=days_ago(1),
+    start_date=datetime(2025, 1, 1),
     params={
         "category": Param("Gift_Cards", type="string", description="Amazon category (e.g. Gift_Cards, All_Beauty)"),
         "skip_optimize": Param(False, type="boolean", description="Skip Delta OPTIMIZE/Z-ORDER in Gold"),
@@ -48,25 +43,16 @@ with DAG(
 
     quality_checks = BashOperator(
         task_id="quality_checks",
-        bash_command=f"cd {PROJECT_ROOT} && python src/quality/quality_checks.py",
+        bash_command=(
+            f"cd {PROJECT_ROOT} && python -c \""
+            "from src.utils.spark_session import get_spark_session; "
+            "from src.quality.quality_checks import validate_silver; "
+            "spark = get_spark_session('QualityChecks'); "
+            "df = spark.read.format('delta').load('data/silver'); "
+            "validate_silver(df); "
+            "print('Quality checks passed'); "
+            "spark.stop()\""
+        ),
     )
 
-    def _start_dashboard():
-        subprocess.run(["pkill", "-f", "streamlit run src/dashboard"], capture_output=True, check=False)
-        env = {**os.environ, "PYTHONPATH": PROJECT_ROOT}
-        with open("/tmp/dashboard.log", "a") as log:
-            subprocess.Popen(
-                ["streamlit", "run", "src/dashboard/app.py", "--server.port=8502", "--server.address=0.0.0.0", "--server.headless=true"],
-                cwd=PROJECT_ROOT,
-                env=env,
-                stdout=log,
-                stderr=subprocess.STDOUT,
-                start_new_session=True,
-            )
-
-    run_dashboard = PythonOperator(
-        task_id="run_dashboard",
-        python_callable=_start_dashboard,
-    )
-
-    ensure_dirs >> fetch_data >> run_pipeline >> quality_checks >> run_dashboard
+    ensure_dirs >> fetch_data >> run_pipeline >> quality_checks
