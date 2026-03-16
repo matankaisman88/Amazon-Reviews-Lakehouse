@@ -18,3 +18,4 @@ data/spark-events/
 !data/.gitkeep
 .great_expectations/
 airflow/.env
+airflow/logs/
