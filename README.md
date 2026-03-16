@@ -173,7 +173,7 @@ For interactive exploration and pipeline runs by category.
 docker compose -f docker/docker-compose.yml up -d dashboard
 ```
 
-This starts the dashboard and its dependencies (`spark-master`, `spark-worker`). Access at `http://localhost:8501`. The dashboard runs Bronze → Silver → Gold via a **subprocess** (isolated from the UI). **Start the Spark cluster first** (`spark-master`, `spark-worker`) so the dashboard can submit jobs to it; the dashboard is on `spark-net` and uses `SPARK_MASTER=spark://spark-master:7077`.
+This starts the dashboard and its dependencies (`spark-master`, `spark-worker`). Access at `http://localhost:8503`. The dashboard runs Bronze → Silver → Gold via a **subprocess** (isolated from the UI). **Start the Spark cluster first** (`spark-master`, `spark-worker`) so the dashboard can submit jobs to it; the dashboard is on `spark-net` and uses `SPARK_MASTER=spark://spark-master:7077`. *(Port 8503 avoids conflict with Airflow scheduler on 8501.)*
 
 ### Run Pipeline (sidebar)
 
@@ -251,6 +251,7 @@ The DAG exposes the same knobs as the dashboard sidebar:
 
 ## Configuration
 
+- **Ports** (when running both Airflow and dashboard): Airflow UI 8080, Airflow scheduler 8501, Dashboard 8503, Spark Master UI 8081, History Server 18080
 - **config/config.yaml** — Paths, Spark settings, dynamic config, AQE, GX checkpoint
 - **.env** — Overrides (copy from `.env.example`)
 - **Dashboard vs CLI**: Both use the Spark cluster when `spark-master` and `spark-worker` are running. The dashboard is on `spark-net` with `SPARK_MASTER=spark://spark-master:7077`; start the cluster before running the pipeline from the UI.

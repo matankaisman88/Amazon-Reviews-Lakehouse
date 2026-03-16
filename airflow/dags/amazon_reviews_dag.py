@@ -48,7 +48,7 @@ with DAG(
             "from src.utils.spark_session import get_spark_session; "
             "from src.quality.quality_checks import validate_silver; "
             "spark = get_spark_session('QualityChecks'); "
-            "df = spark.read.format('delta').load('data/silver'); "
+            "df = spark.read.format('delta').load('data/silver/amazon_reviews'); "
             "validate_silver(df); "
             "print('Quality checks passed'); "
             "spark.stop()\""

@@ -10,7 +10,7 @@ services:
     container_name: spark-master
     ports:
       - "7077:7077"
-      - "8080:8080"
+      - "8081:8080"
     environment:
       - SPARK_MASTER_HOST=spark-master
       - SPARK_MASTER_PORT=7077
@@ -107,7 +107,7 @@ services:
       # Mount .env so load_dotenv() can load OPENAI_API_KEY (env_file path can fail on Windows)
       - ../.env:/opt/spark-app/.env:ro
     ports:
-      - "8501:8501"
+      - "8503:8501"
     command: streamlit run src/dashboard/app.py --server.port=8501 --server.address=0.0.0.0
     networks:
       - spark-net
