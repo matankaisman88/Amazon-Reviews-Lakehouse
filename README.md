@@ -221,10 +221,10 @@ For scheduled or ad-hoc runs of the Amazon pipeline, managed by Airflow.
 
 ```bash
 cd airflow
-docker compose up -d
+docker compose up -d --build
 ```
 
-This starts Postgres, the Airflow webserver, scheduler, and an Airflow worker container that mounts the project at `/opt/airflow/project`.
+This builds the Airflow image (with PySpark, Delta, and pipeline deps) and starts Postgres, the Airflow webserver, scheduler, and worker. The project is mounted at `/opt/airflow/project`. Use `--build` on first run or when `requirements-docker.txt` changes.
 
 - **Airflow UI**: `http://localhost:8080`
 - **Logs**: `airflow/logs/`
